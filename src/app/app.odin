@@ -16,6 +16,8 @@ import postfx "../rendering/postfx"
 import rendering "../rendering"
 import dbg "../core/gl_debug"
 import gl_state "../core/gl_state"
+import itt "../core/itt"
+import renderdoc "../core/renderdoc"
 
 @(private)
 frame_zone_loc := tracy.Source_Location_Data{
@@ -110,6 +112,9 @@ App :: struct {
 
 	// Performance mode (GameMode / SCHED_FIFO / Nice)
 	perf:            perf_mode.Perf_Mode,
+
+	// Gamepad / Controller input (DualShock 4 / DualSense / Logitech / XInput)
+	gamepad:         Gamepad_State,
 }
 
 // Creates the application (allocates + creates window).
@@ -124,10 +129,19 @@ create :: proc(width, height: i32, title: cstring) -> ^App {
 }
 
 // Initializes the application: window, OpenGL context, callbacks.
-init :: proc(application: ^App, vsync: bool = false, compute_profile: settings.Compute_Shader_Profile = .Legacy) -> bool {
+init :: proc(
+	application: ^App,
+	vsync: bool = false,
+	compute_profile: settings.Compute_Shader_Profile = .Legacy,
+	capture_ibl: bool = false,
+) -> bool {
 	if application == nil { return false }
 
 	log.set_callback(tracy_log_callback)
+
+	// Probe Intel ITT and RenderDoc in-app APIs
+	itt.init()
+	renderdoc.init()
 
 	// Try to load previous session
 	session_state := session.Session_State{}
@@ -185,6 +199,9 @@ init :: proc(application: ^App, vsync: bool = false, compute_profile: settings.C
 	glfw.SetInputMode(application.window, glfw.CURSOR, glfw.CURSOR_DISABLED)
 	application.camera_enabled = true
 
+	// Gamepad / Controller subsystem
+	gamepad_init(&application.gamepad)
+
 	// Load compute shader and slicing parameters from JSON file
 	tuning_params := settings.load_compute_tuning_params(compute_profile)
 
@@ -193,6 +210,7 @@ init :: proc(application: ^App, vsync: bool = false, compute_profile: settings.C
 		log.log_error("suckless-odin.app", "Failed to create scene")
 		return false
 	}
+	application.scene.env_mgr.capture_ibl = capture_ibl
 
 	// Initialize GUI (Dear ImGui)
 	if !gui.init(&application.imgui, application.window) {
@@ -268,6 +286,8 @@ run :: proc(application: ^App) {
 		if !gui.wants_keyboard(&application.imgui) {
 			process_keyboard(application)
 		}
+
+		gamepad_poll(application, &application.gamepad, application.delta_time)
 
 		update_start := time.tick_now()
 		// Update scene (camera physics, etc.)

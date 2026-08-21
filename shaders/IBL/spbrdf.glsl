@@ -14,7 +14,7 @@
     - Output LUT stores (scale, bias) for Fresnel term
 ==============================================================================*/
 
-layout(local_size_x = 32, local_size_y = 32, local_size_z = 1) in;
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
 /*==============================================================================
     Constants

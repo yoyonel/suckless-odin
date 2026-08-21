@@ -32,9 +32,9 @@ Nous proposons deux modes d'estimation de la variance :
 ## 3. Architecture d'Intégration & Contrôles UI
 
 Les composants modifiés sont les suivants :
-- **[types.odin](file:///home/latty/Prog/__PERSO__/suckless-odin/src/rendering/types/types.odin) :** Ajout des enums `Specular_AA_Mode` et `Specular_AA_Debug_Mode`.
-- **[scene.odin](file:///home/latty/Prog/__PERSO__/suckless-odin/src/scene/scene.odin) :** Initialisation et transmission des paramètres et uniforms au shader de rendu (`u_specular_aa_enabled`, `u_specular_aa_mode`, `u_specular_aa_debug_mode`, etc.).
-- **[gui.odin](file:///home/latty/Prog/__PERSO__/suckless-odin/src/gui/gui.odin) :** Ajout de contrôles interactifs dans l'onglet **Rendering** :
+- **[types.odin](../src/rendering/types/types.odin) :** Ajout des enums `Specular_AA_Mode` et `Specular_AA_Debug_Mode`.
+- **[scene.odin](../src/scene/scene.odin) :** Initialisation et transmission des paramètres et uniforms au shader de rendu (`u_specular_aa_enabled`, `u_specular_aa_mode`, `u_specular_aa_debug_mode`, etc.).
+- **[gui.odin](../src/gui/gui.odin) :** Ajout de contrôles interactifs dans l'onglet **Rendering** :
   - **Specular Anti-Aliasing (Varef) :** Activation globale.
   - **Specular AA Mode :** Choix entre *Screen-Space* et *Curvature*.
   - **Debug View :**
@@ -60,7 +60,7 @@ Sur les GPU Intel (tels que Mesa Intel Iris Xe), les sphères avec une rugosité
 ### Correctif apporté
 Nous avons éliminé tout recours aux fonctions `isnan()` et `isinf()` pour le filtrage et le clamping de la rugosité et de la variance, en introduisant un **clamping par branchement conditionnel direct** résistant aux optimisations de compilateurs :
 
-Dans [spmap.glsl](file:///home/latty/Prog/__PERSO__/suckless-odin/shaders/IBL/spmap.glsl) :
+Dans [spmap.glsl](../shaders/IBL/spmap.glsl) :
 ```glsl
 float maxMip = max(log2(float(max(textureSize(envMap, 0).x, textureSize(envMap, 0).y))), 0.0);
 if (mipLevel >= 0.0 && mipLevel <= maxMip) {
@@ -75,7 +75,7 @@ Ce code assure que :
 - Si `mipLevel` est supérieur à `maxMip` ou s'il est `NaN`/`+Inf` (les comparaisons `>= 0.0` et `<= maxMip` renvoient `false`), il est forcé à `maxMip`.
 - Si `mipLevel` est inférieur à `0.0` ou ` -Inf`, il est forcé à `0.0`.
 
-Une logique identique a été appliquée dans [pbr_billboard.frag](file:///home/latty/Prog/__PERSO__/suckless-odin/shaders/pbr_billboard.frag) pour valider et brider la variance géométrique :
+Une logique identique a été appliquée dans [pbr_billboard.frag](../shaders/pbr_billboard.frag) pour valider et brider la variance géométrique :
 ```glsl
 // Sanitize variance and cap it to prevent "exploding" roughness at geometric silhouettes
 if (variance >= 0.0 && variance <= 0.1) {

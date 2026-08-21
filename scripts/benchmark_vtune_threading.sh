@@ -45,9 +45,8 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 
 chmod +x ./scripts/interactive_runner.sh
 
-echo "[vtune] Collection threading avec sudo..."
-sudo -E "$VTUNE_BIN" -collect threading -project-dir "$PROJECT_DIR" env TMP_DIR="$TMP_DIR" ./scripts/interactive_runner.sh "$APP_BIN"
-sudo chown -R "$USER":"$USER" "$PROJECT_DIR"
+echo "[vtune] Collection threading..."
+"$VTUNE_BIN" -collect threading -result-dir "$PROJECT_DIR/r@@@tr" -- env TMP_DIR="$TMP_DIR" ./scripts/interactive_runner.sh "$APP_BIN"
 
 RES_DIR=$(ls -td "$PROJECT_DIR"/r* 2>/dev/null | head -n1 || true)
 

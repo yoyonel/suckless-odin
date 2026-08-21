@@ -1,209 +1,154 @@
 # CI/CD & Build System
 
-## Build Configuration
+## 1. Build Configuration & Targets
 
-The project uses separate output directories per build configuration to avoid overwrites:
+The project uses separate output directories per build configuration to avoid artifact collisions:
 
-```
+```text
 build/
 ├── debug/suckless-odin       # Debug symbols, assertions enabled
-├── release/suckless-odin     # Optimized (-o:speed), stripped
+├── release/suckless-odin     # Optimized (-o:speed), stripped, headless/GUI
 └── sanitize/suckless-odin    # AddressSanitizer instrumented
 ```
 
-### Build Targets
+### Build Targets (Taskfile.yml)
 
 | Recipe | Output | Odin Flags | Use Case |
-|--------|--------|-----------|----------|
-| `task build` | `build/debug/` | `-debug` | Development, debugging |
-| `task build-release` | `build/release/` | `-o:speed` | Performance testing, distribution |
-| `task build-strict` | `build/debug/` | `-debug -vet -strict-style -warnings-as-errors` | Pre-commit validation |
-| `task build-sanitize` | `build/sanitize/` | `-debug -sanitize:address` | Memory error detection |
+|---|---|---|---|
+| `task build` | `build/debug/` | `-debug -use-separate-modules` | Development, rapid iteration |
+| `task build-fast-release` | `build/fast-release/` | `-o:minimal -use-separate-modules` | Quick optimized build |
+| `task build-release` | `build/release/` | `-o:speed -use-separate-modules` | Production Linux performance testing |
+| `task build-ultra` | `build/ultra/` | `-o:aggressive -no-bounds-check -no-type-assert` | Maximum benchmark throughput |
+| `task build-strict` | `build/debug/` | `-debug -vet -strict-style -warnings-as-errors` | Pre-commit quality gate |
+| `task build-sanitize` | `build/sanitize/` | `-debug -use-separate-modules -sanitize:address` | Memory error & leak detection |
+| `task build-win-release` | `build-windows/release/` | `-target:windows_amd64 -o:speed` | Production Windows binary |
 
-### Running
+---
 
-```bash
-task run           # Run debug build
-task run-release   # Run release build
-task br            # Build debug + run
-```
+## 2. CI/CD Architecture (Decoupled Modular Design)
 
-## CI/CD Pipeline (GitHub Actions)
+The CI pipeline uses a **modular, reusable architecture** combining lightweight orchestration (`workflow_call`), reusable GitHub Composite Actions, and standalone CI shell scripts.
 
-The CI runs on every push to `master`/`main` and on pull requests.
-
-### Pipeline Structure
+### High-Level Topology
 
 ```mermaid
-graph LR
-    A[lint] --> C[build debug/release]
-    B[deps] --> C
-    B --> D[test-unit]
-    B --> E[test-gl]
-    A --> D
-    A --> E
+graph TD
+    Trigger([Push / PR / Manual]) --> Orchestrator[".github/workflows/ci.yml<br/>(Top-Level Orchestrator)"]
+
+    Orchestrator --> LintJob["Lint & Codegen<br/>(ci-lint.yml)"]
+    LintJob --> LinuxCI["Linux CI<br/>(ci-linux.yml)"]
+    LintJob --> WindowsCI["Windows CI<br/>(ci-windows.yml)"]
+
+    subgraph LinuxSub["ci-linux.yml"]
+        LinuxCI --> LDeps["Build Deps<br/>(GLFW + ImGui)"]
+        LDeps --> LBuild["Matrix 6 Targets<br/>(debug, release, ultra, etc.)"]
+        LDeps --> LUnit["Unit & CLI Tests"]
+        LDeps --> LGL["OpenGL & Visual Tests<br/>(llvmpipe + xvfb)"]
+    end
+
+    subgraph WindowsSub["ci-windows.yml"]
+        WindowsCI --> WTest["Wine Test Suite<br/>(12 Unit/CLI/Shader Tests)"]
+        WTest --> WPkg["Windows Packaging & Sandbox<br/>(.tar.zst & .zip verification)"]
+    end
 ```
 
-### Jobs
+---
 
-| Job | Purpose | Dependencies | Cache |
-|-----|---------|-------------|-------|
-| **lint** | `odin check -vet -strict-style -warnings-as-errors` | None | Odin compiler |
-| **deps** | Build GLFW 3.4 (shared) + ImGui .a, upload as artifacts | None | GLFW by version, ImGui by script hash |
-| **build** | Compile debug + release (matrix) | lint, deps | Odin compiler |
-| **test-unit** | Unit tests, CLI tests, shader CPU tests | lint, deps | Odin compiler |
-| **test-gl** | GL shader tests + visual regression (xvfb + Mesa) | lint, deps | Odin compiler |
+## 3. Workflows Breakdown
 
-### Dependency Mutualization
+### Top-Level Orchestrator ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml))
 
-GLFW and ImGui are built **once** in the `deps` job and shared via artifacts:
+Coordinates all sub-workflows concurrently using standard GitHub Actions `workflow_call` interfaces. It replaces legacy monolithic 500+ line workflows with a clean ~30 line coordinator.
 
-- **GLFW**: cached with key `glfw-3.4-shared-ubuntu-latest`, installed to `$GITHUB_WORKSPACE/glfw-install`
-- **ImGui**: cached with key `imgui-${{ hashFiles('build.py', 'build_imgui_parallel.py') }}`
-- Consumer jobs download artifacts and install GLFW to `/usr/local/lib/`
+### Reusable Sub-Workflows
 
-This eliminates redundant 60s+ builds in every job.
+| Workflow | File | Triggers | Roles & Steps |
+|---|---|---|---|
+| **CI Lint** | [`.github/workflows/ci-lint.yml`](../.github/workflows/ci-lint.yml) | `workflow_call`, `workflow_dispatch` | Ruff lint/format, State Machine TLA+ codegen parity check, `odin check -vet -strict-style`. |
+| **CI Linux** | [`.github/workflows/ci-linux.yml`](../.github/workflows/ci-linux.yml) | `workflow_call`, `workflow_dispatch` | Dependency build (GLFW 3.4 shared, ImGui .a), 6 matrix target builds, Unit/CLI/Shader tests, headless OpenGL & visual regression under xvfb. |
+| **CI Windows** | [`.github/workflows/ci-windows.yml`](../.github/workflows/ci-windows.yml) | `workflow_call`, `workflow_dispatch` | Cross-compilation with Clang-19/LLD-19/MinGW, 12 test suites executed under Wine, `.tar.zst`/`.zip` packaging & sandboxed distribution verification. |
+| **Docker CI Image** | [`.github/workflows/docker-ci-image.yml`](../.github/workflows/docker-ci-image.yml) | `push` on `Dockerfile.ci`, `workflow_dispatch` | Builds and publishes `ghcr.io/yoyonel-lab/suckless-odin-ci:latest` to GitHub Container Registry with BuildKit GHA layer caching. |
+| **Nightly Chaos** | [`.github/workflows/nightly.yml`](../.github/workflows/nightly.yml) | `schedule (0 2 * * *)`, `workflow_dispatch` | Stochastic concurrent temporal chaos fuzzer under headless Xvfb with core dump generation and markdown diagnostics summary. |
+| **Release** | [`.github/workflows/release.yml`](../.github/workflows/release.yml) | `push tags (v*)`, `workflow_dispatch` | Packages Linux AMD64 and Windows x86_64 distributions and publishes GitHub Release with SHA-256 checksums. |
 
-### GL Tests in CI
+---
 
-GL tests run headless using:
-- **Mesa** (software OpenGL implementation)
-- **xvfb** (virtual framebuffer for X11)
+## 4. Reusable Composite Actions ([`.github/actions/`](../.github/actions/))
+
+To eliminate boilerplate across workflows, reusable composite actions encapsulate recurring toolchain setup:
+
+1. **[`setup-odin`](../.github/actions/setup-odin/action.yml)**:
+   - Downloads, caches, and configures the pinned Odin compiler (`dev-2026-05`).
+   - Compiles STB dependencies into `$ODIN_ROOT/vendor/stb/src`.
+2. **[`setup-linux-deps`](../.github/actions/setup-linux-deps/action.yml)**:
+   - Installs apt packages (X11, Mesa, xvfb).
+   - Deploys cached GLFW 3.4 shared libraries and ImGui static library artifacts.
+3. **[`setup-windows-toolchain`](../.github/actions/setup-windows-toolchain/action.yml)**:
+   - Configures MinGW-w64, Clang-19, LLD-19, Wine64, and Task.
+   - Sets symlinks for `clang`, `lld`, `llvm-ar`, and `wine`.
+
+---
+
+## 5. Standalone CI Scripts ([`scripts/ci/`](../scripts/ci/))
+
+All shell logic previously inlined in YAML is isolated into standalone bash scripts, testable locally:
+
+- [`scripts/ci/setup_odin.sh`](../scripts/ci/setup_odin.sh) : Compiles STB and sets up Odin.
+- [`scripts/ci/verify_codegen.sh`](../scripts/ci/verify_codegen.sh) : Runs codegen parity verification.
+- [`scripts/ci/build_glfw_shared.sh`](../scripts/ci/build_glfw_shared.sh) : Compiles GLFW 3.4 shared library.
+- [`scripts/ci/install_glfw_system.sh`](../scripts/ci/install_glfw_system.sh) : Deploys GLFW into `/usr/local/lib`.
+- [`scripts/ci/build_imgui_linux.sh`](../scripts/ci/build_imgui_linux.sh) : Generates ImGui bindings and compiles `.a`.
+- [`scripts/ci/setup_linux_system.sh`](../scripts/ci/setup_linux_system.sh) : Installs system packages.
+- [`scripts/ci/setup_win_toolchain.sh`](../scripts/ci/setup_win_toolchain.sh) : Sets up Clang-19 Windows cross-toolchain.
+
+---
+
+## 6. Local ISO Docker Environment (`Dockerfile.ci`)
+
+To ensure **100% reproducibility between local development and remote CI**, the project maintains an ISO Docker container mirroring `ubuntu:24.04` and GitHub Actions runners.
+
+### Features
+
+- **BuildKit APT Cache Mounts**: `RUN --mount=type=cache,target=/var/cache/apt` eliminates re-downloading `.deb` packages.
+- **Full Toolchain**: Includes Clang-19, MinGW, Wine, Wayland, Mesa llvmpipe, and Task.
+
+### Commands
 
 ```bash
-xvfb-run -a -s "-screen 0 1024x768x24" odin test tests/gl/ -define:ODIN_TEST_THREADS=1
+# Build local ISO image with BuildKit
+task ci-docker-build
+
+# Run full CI test suite in container (identical to GitHub Actions)
+task ci-docker mode=all
+
+# Run specific targeted modes
+task ci-docker mode=test-unit
+task ci-docker mode=test-gl
+task ci-docker mode=test-win
+task ci-docker mode=package-win
 ```
 
-### Visual Regression
+---
 
-The visual regression test renders the full PBR scene from 6 camera viewpoints and compares against reference images in `tests/references/`.
+## 7. Quality Gates & Pre-commit Hooks
 
-- **Threshold**: 5.0 RGB euclidean distance per pixel
-- **Tolerance**: Max 2% of pixels may differ
-- **On failure**: Diff artifacts are uploaded as GitHub Actions artifacts
-
-To regenerate references locally:
+Pre-commit hooks are managed via `.pre-commit-config.yaml`:
 
 ```bash
-task gen-refs        # With display
-task gen-refs-xvfb   # Headless
+# Install hooks
+task pre-commit-install
+
+# Run manually
+task check
+task lint
 ```
 
-### HDR Asset
-
-The scene requires an HDR environment map (`assets/textures/hdr/cedar_bridge_2_4k.hdr`) which is tracked directly in this repository.
-
-## Local CI
-
-Run the full pipeline locally (mirrors GitHub Actions):
-
-```bash
-task ci              # lint + build + all tests (with xvfb)
-task test-gl-xvfb   # GL tests only, headless
-```
-
-> **Note:** For executing the local build pipeline across isolated containers (e.g., `distrobox`) or offloading to NVIDIA GPUs via MangoHud natively, refer to [Distrobox Environment & Native GPU Offloading](distrobox-optimus-2026-05-24.md).
-
-## Dependencies
-
-### Dear ImGui (odin-imgui submodule)
-
-| Aspect | Valeur |
-|--------|--------|
-| Upstream | [steinarb1234/odin-imgui](https://github.com/steinarb1234/odin-imgui) |
-| Gestion | Git submodule at `deps/odin-imgui` |
-| Binaire | `imgui_linux_x64.a` — construit localement, non versionné |
-| Build requires | `python3`, `clang`, `ar`, `git` |
-
-```bash
-git submodule update --init    # After clone
-task build-imgui               # Compile .a (~90s)
-task update-imgui              # Pull latest + rebuild
-```
-
-### GLFW 3.4+ (built from source, shared)
-
-odin-imgui requires GLFW 3.4+ (`glfwGetPlatform`), but Ubuntu's `libglfw3-dev` provides 3.3.x.
-Odin's vendor GLFW on Linux expects a shared library (`system:glfw` → `-lglfw` → `libglfw.so`).
-
-In CI, the `deps` job builds GLFW as a shared library from upstream:
-
-```bash
-git clone --depth 1 --branch 3.4 https://github.com/glfw/glfw.git /tmp/glfw-src
-cmake -S /tmp/glfw-src -B /tmp/glfw-build \
-  -DCMAKE_INSTALL_PREFIX=$GITHUB_WORKSPACE/glfw-install \
-  -DBUILD_SHARED_LIBS=ON \
-  -DGLFW_BUILD_EXAMPLES=OFF -DGLFW_BUILD_TESTS=OFF -DGLFW_BUILD_DOCS=OFF
-cmake --build /tmp/glfw-build -j$(nproc)
-cmake --install /tmp/glfw-build
-```
-
-Consumer jobs then install to system:
-```bash
-sudo cp -a glfw-install/lib/* /usr/local/lib/
-sudo cp -a glfw-install/include/* /usr/local/include/
-cd /usr/local/lib && sudo ln -sf libglfw.so.3 libglfw.so  # ensure symlink
-sudo ldconfig
-```
-
-Locally, install GLFW 3.4+ via your package manager (e.g., `brew install glfw`).
-
-### C++ Runtime (libc++)
-
-ImGui's C++ code links against `libc++`. In CI:
-
-```bash
-apt-get install libc++-dev libc++abi-dev
-```
-
-Extra linker flags in CI: `-lX11` (imgui_impl_glfw calls X11 directly).
-
-### Odin Compiler
-
-The CI uses a pinned Odin nightly release, cached between runs:
-- Version: `nightly+2026-05-03`
-- Platform: `linux-amd64`
-- Install path: `/opt/odin` (CI) or `/home/latty/.local/share/odin-compiler/` (local dev)
-
-## Memory Safety (ASAN / LSAN)
-
-All allocations must be matched with corresponding `delete`/`free`. Validate with:
-
-```bash
-task build-sanitize                           # Build with -sanitize:address
-./build/sanitize/suckless-odin & APP_PID=$!
-sleep 2 && xdotool key Escape                 # Clean shutdown (triggers LSAN)
-wait $APP_PID                                 # Exit code 0 = no leaks
-```
-
-**Key patterns** (see `.github/instructions/odin-coding-style.instructions.md`):
-- `os.read_entire_file` → `defer delete(data)`
-- `strings.clone_to_cstring` → `defer delete(cstr)` or freed in `destroy`
-- Struct-owned allocations → freed in the struct's `destroy` proc
-
-## Pre-commit Hooks (official framework)
-
-Uses [pre-commit.com](https://pre-commit.com/) framework. Config in `.pre-commit-config.yaml`.
-
-### Install
-
-```bash
-task pre-commit-install    # Installs both pre-commit and pre-push hooks
-```
-
-### Hooks
-
-| Stage | Hook | What it does |
-|-------|------|-------------|
-| pre-commit | `odin-lint` | `odin check src/ -vet -strict-style -warnings-as-errors` |
-| pre-push | `odin-build` | `odin build src/ -out:/tmp/odin-build-check -debug` |
-| pre-push | `odin-test-unit` | `odin test tests/ -out:/tmp/odin-test-unit` |
-| pre-push | `odin-test-cli` | `odin test src/ -out:/tmp/odin-test-cli` |
-| pre-push | `odin-test-shader` | `odin test src/rendering/shader/ -out:/tmp/odin-test-shader` |
-| pre-push | `odin-test-gl` | `odin test tests/gl/ -out:/tmp/odin-test-gl` (headless xvfb) |
-
-### Binary Pollution Prevention
-
-All `odin test` commands use `-out:/tmp/odin-test-*` to avoid creating binaries
-in the working directory. Without this, `odin test tests/` would try to create a
-file named `tests` conflicting with the `tests/` directory.
+| Stage | Hook | Action |
+|---|---|---|
+| `pre-commit` | `codegen-check` | State Machine TLA+ synchronization verification |
+| `pre-commit` | `odin check` | `odin check src/ -vet -strict-style -warnings-as-errors` |
+| `pre-commit` | `markdownlint-cli2` | Markdown style compliance |
+| `pre-push` | `odin-build` | Debug build verification |
+| `pre-push` | `odin-test-unit` | Unit test execution |
+| `pre-push` | `odin-test-cli` | CLI test execution |
+| `pre-push` | `odin-test-shader` | Shader CPU test execution |

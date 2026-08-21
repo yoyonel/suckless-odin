@@ -8,8 +8,6 @@
 	"enable_references": true,
 	"enable_inlay_hints_params": true,
 	"enable_procedure_snippet": true,
-	"odin_command": "/home/latty/.local/share/odin-compiler/odin",
-	"odin_root_override": "/home/latty/.local/share/odin-compiler",
 	"checker_args": "-vet -strict-style",
 	"verbose": true,
 	"profile": "default",

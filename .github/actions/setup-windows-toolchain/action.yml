@@ -1,0 +1,23 @@
+name: "Setup Windows Toolchain"
+description: "Installs MinGW-w64, Clang-19, LLD-19, Wine and sets up Task runner"
+inputs:
+  with-packaging:
+    description: "Install additional packaging tools (zstd, zip, rsync)"
+    required: false
+    default: "false"
+  github-token:
+    description: "GitHub token for setup-task"
+    required: false
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install Windows cross-compilation & Wine dependencies
+      shell: bash
+      run: bash scripts/ci/setup_win_toolchain.sh "${{ inputs.with-packaging }}"
+
+    - name: Install Task runner
+      uses: arduino/setup-task@v2
+      with:
+        version: 3.x
+        repo-token: ${{ inputs.github-token }}

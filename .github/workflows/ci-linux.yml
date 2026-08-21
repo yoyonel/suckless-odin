@@ -1,0 +1,197 @@
+name: CI Linux
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+env:
+  ODIN_VERSION: "dev-2026-05"
+  ODIN_URL: "https://github.com/odin-lang/Odin/releases/download/dev-2026-05/odin-linux-amd64-dev-2026-05.tar.gz"
+  GLFW_VERSION: "3.4"
+
+jobs:
+  # ─── 1. BUILD DEPENDENCIES (GLFW + ImGui) ───────────────────────────────────
+  deps:
+    name: Build Linux Dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Cache GLFW ${{ env.GLFW_VERSION }}
+        id: cache-glfw
+        uses: actions/cache@v4
+        with:
+          path: glfw-install
+          key: glfw-${{ env.GLFW_VERSION }}-shared-ubuntu-latest
+
+      - name: Build GLFW from source (shared)
+        if: steps.cache-glfw.outputs.cache-hit != 'true'
+        run: bash scripts/ci/build_glfw_shared.sh "$GITHUB_WORKSPACE/glfw-install"
+
+      - name: Upload GLFW artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: glfw-install
+          path: glfw-install
+          retention-days: 1
+
+      - name: Cache ImGui library
+        id: cache-imgui
+        uses: actions/cache@v4
+        with:
+          path: deps/odin-imgui/imgui_linux_x64.a
+          key: imgui-${{ hashFiles('deps/odin-imgui/build.py', 'scripts/build_imgui_parallel.py') }}
+
+      - name: Setup Odin compiler (for ImGui build)
+        if: steps.cache-imgui.outputs.cache-hit != 'true'
+        uses: ./.github/actions/setup-odin
+
+      - name: Build ImGui
+        if: steps.cache-imgui.outputs.cache-hit != 'true'
+        run: bash scripts/ci/build_imgui_linux.sh
+
+      - name: Upload ImGui artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: imgui-lib
+          path: deps/odin-imgui/imgui_linux_x64.a
+          retention-days: 1
+
+  # ─── 2. BUILD MATRIX (Linux targets) ───────────────────────────────────────
+  build:
+    name: Build (${{ matrix.mode }})
+    needs: [deps]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        mode: [debug, fast-release, release, ultra, sanitize, strict]
+        include:
+          - mode: debug
+            flags: "-debug -use-separate-modules"
+          - mode: fast-release
+            flags: "-o:minimal -use-separate-modules"
+          - mode: release
+            flags: "-o:speed -use-separate-modules"
+          - mode: ultra
+            flags: "-o:aggressive -no-bounds-check -no-type-assert"
+          - mode: sanitize
+            flags: "-debug -use-separate-modules -sanitize:address"
+          - mode: strict
+            flags: "-debug -vet -strict-style -warnings-as-errors"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Setup Odin compiler
+        uses: ./.github/actions/setup-odin
+
+      - name: Setup Linux dependencies
+        uses: ./.github/actions/setup-linux-deps
+        with:
+          mode: build
+
+      - name: Build (${{ matrix.mode }})
+        run: |
+          mkdir -p build/${{ matrix.mode }}
+          odin build src/ \
+            -out:build/${{ matrix.mode }}/suckless-odin \
+            ${{ matrix.flags }} \
+            -extra-linker-flags:"-lX11"
+
+      - name: Upload binary
+        if: matrix.mode == 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: suckless-odin-linux-amd64
+          path: build/release/suckless-odin
+
+  # ─── 3. UNIT TESTS ─────────────────────────────────────────────────────────
+  test-unit:
+    name: Unit & CLI Tests
+    needs: [deps]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Setup Odin compiler
+        uses: ./.github/actions/setup-odin
+
+      - name: Setup Linux dependencies
+        uses: ./.github/actions/setup-linux-deps
+        with:
+          mode: build
+
+      - name: System resources & core dumps
+        run: |
+          free -m && nproc && df -h /tmp
+          ulimit -c unlimited
+          echo '/tmp/core.%e.%p' | sudo tee /proc/sys/kernel/core_pattern
+
+      - name: Run unit tests
+        run: |
+          odin build tests/ -out:/tmp/odin-test-unit -build-mode:test -extra-linker-flags:"-lX11"
+          /tmp/odin-test-unit
+
+      - name: Run CLI tests
+        run: |
+          odin build src/ -out:/tmp/odin-test-cli -build-mode:test -extra-linker-flags:"-lX11"
+          /tmp/odin-test-cli
+
+      - name: Run shader CPU tests
+        run: |
+          odin build src/rendering/shader/ -out:/tmp/odin-test-shader -build-mode:test -extra-linker-flags:"-lX11"
+          /tmp/odin-test-shader
+
+      - name: Upload core dump on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-dump-unit-tests
+          path: /tmp/core.*
+          if-no-files-found: ignore
+          retention-days: 3
+
+  # ─── 4. GL TESTS & VISUAL REGRESSION ───────────────────────────────────────
+  test-gl:
+    name: OpenGL & Visual Tests (xvfb)
+    needs: [deps]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Setup Odin compiler
+        uses: ./.github/actions/setup-odin
+
+      - name: Setup Linux dependencies (Mesa + xvfb)
+        uses: ./.github/actions/setup-linux-deps
+        with:
+          mode: gl
+
+      - name: Build OpenGL test binary
+        run: |
+          odin build tests/gl/ \
+            -out:/tmp/odin-test-gl \
+            -build-mode:test \
+            -define:ODIN_TEST_THREADS=1 \
+            -extra-linker-flags:"-lX11"
+
+      - name: Run OpenGL & Visual tests (headless under xvfb)
+        run: |
+          export LIBGL_ALWAYS_SOFTWARE=1
+          export GALLIUM_DRIVER=llvmpipe
+          xvfb-run -a -s "-screen 0 1024x768x24" /tmp/odin-test-gl
+
+      - name: Upload visual artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-regression-artifacts
+          path: tests/references/failed_*.png
+          if-no-files-found: ignore

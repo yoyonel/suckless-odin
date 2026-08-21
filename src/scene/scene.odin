@@ -129,6 +129,10 @@ scene_create :: proc(s: ^Scene, width, height: i32, compute_tuning := settings.D
 		return false
 	}
 
+	// Bind initial IBL textures from the pool (OPT-04)
+	s.ibl.prefilter_map  = s.env_mgr.specular_pool[0]
+	s.ibl.irradiance_map = s.env_mgr.irradiance_pool[0]
+
 	// Scan HDR directory for environment cycling (PAGE_UP/PAGE_DOWN)
 	scene_scan_hdr_files(s)
 
@@ -194,6 +198,7 @@ scene_render :: proc(s: ^Scene, width, height: i32) {
 	dbg.push_group("Scene_Render")
 	defer dbg.pop_group()
 
+	s.postfx_pipeline.needs_sync_barrier = (s.env_mgr.ibl_state != .Idle)
 	postfx.pipeline_begin(&s.postfx_pipeline)
 
 	aspect := f32(width) / f32(max(height, 1))

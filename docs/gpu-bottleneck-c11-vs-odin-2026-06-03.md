@@ -21,7 +21,7 @@ Cette documentation analyse les causes de ce plafonnement (GPU capping/under-uti
 ### 🔍 A. Configuration de l'Offloading PRIME Hybride (Optimus)
 Le premier facteur de différence réside dans la configuration de l'offloading graphique sur le PC portable.
 
-Dans le fichier [.env](file:///home/latty/Prog/__PERSO__/suckless-odin/.env), les variables requises pour le PRIME Render Offload d'NVIDIA et le débrayage du VSync sont absentes :
+Dans le fichier `.env`, les variables requises pour le PRIME Render Offload d'NVIDIA et le débrayage du VSync sont absentes :
 ```env
 # Configuration requise mais absente de l'environnement actif
 __NV_PRIME_RENDER_OFFLOAD=1
@@ -83,7 +83,7 @@ Pour éliminer ces bottlenecks et retrouver une utilisation optimale à 99 % sur
 
 | Source du Bottleneck | Action Corrective | Impact Attendu |
 | :--- | :--- | :--- |
-| **Offloading GPU** | Compléter le fichier [.env](file:///home/latty/Prog/__PERSO__/suckless-odin/.env) avec les variables PRIME d'Nvidia. | Transition immédiate sur la GTX 950M (+300% FPS). |
+| **Offloading GPU** | Compléter le fichier `.env` avec les variables PRIME d'Nvidia. | Transition immédiate sur la GTX 950M (+300% FPS). |
 | **Wayland Sync** | Exécuter l'application sous XWayland via la variable `GLFW_PLATFORM=x11` ou activer le tearing Wayland. | Débrayage complet du VSync, GPU à 99% d'usage. |
 | **Build overhead** | Utiliser exclusivement le mode Ultra-Release pour les mesures de frametime (`task br-ultra`). | Élimination des vérifications CPU, soumission instantanée. |
 | **Tracy Profiling** | Lancer la version release classique (`task run-release`) sans Tracy. | Suppression des overheads liés aux requêtes `glQueryCounter`. |

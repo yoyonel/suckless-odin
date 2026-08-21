@@ -46,7 +46,7 @@ During thorough execution profiling under Valgrind's Memcheck engine, three prim
 
 ## 2. Qualified Suppressions Architecture
 
-To suppress third-party driver noise (from X11, D-Bus, GLFW, GameMode, and OpenGL driver binaries) and compiler-optimized runtime behaviors, we constructed a dedicated [valgrind.supp](file:///home/latty/Prog/__PERSO__/suckless-odin/valgrind.supp) suppression file.
+To suppress third-party driver noise (from X11, D-Bus, GLFW, GameMode, and OpenGL driver binaries) and compiler-optimized runtime behaviors, we constructed a dedicated [valgrind.supp](../valgrind.supp) suppression file.
 
 ### 2.1 Key Suppression Blocks
 *   **Odin Allocator False Positives**: Suppressed optimized condition jumps in the standard allocator:

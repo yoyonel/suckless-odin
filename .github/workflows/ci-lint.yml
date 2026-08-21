@@ -1,0 +1,37 @@
+name: CI Lint & Verification
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  lint:
+    name: Lint & Codegen Verification
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Lint and Format Python code (Ruff)
+        run: |
+          pip install ruff
+          ruff check scripts/
+          ruff format --check scripts/
+
+      - name: Setup Odin compiler
+        uses: ./.github/actions/setup-odin
+
+      - name: Verify State Machine Parity (Codegen Check)
+        run: bash scripts/ci/verify_codegen.sh
+
+      - name: Vet & Strict Style Check
+        run: odin check src/ -vet -strict-style -warnings-as-errors
+
+      - name: Verify Documentation Links Integrity
+        run: python3 scripts/verify_docs_links.py
+
+      - name: Markdown Lint Check
+        uses: DavidAnson/markdownlint-cli2-action@v19
+        with:
+          globs: '**/*.md'

@@ -1,0 +1,72 @@
+name: CI Windows
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+env:
+  ODIN_VERSION: "dev-2026-05"
+  ODIN_URL: "https://github.com/odin-lang/Odin/releases/download/dev-2026-05/odin-linux-amd64-dev-2026-05.tar.gz"
+
+jobs:
+  # ─── 1. WINDOWS CROSS-COMPILATION & WINE TESTS ─────────────────────────────
+  test-windows:
+    name: Windows Wine Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Odin compiler
+        uses: ./.github/actions/setup-odin
+
+      - name: Setup Windows toolchain & Wine
+        uses: ./.github/actions/setup-windows-toolchain
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build Windows Dependencies (GLFW, ImGui, SIMD, STB)
+        run: task build-win-deps
+
+      - name: Run Windows test suites under Wine
+        run: task test-win
+
+  # ─── 2. WINDOWS PACKAGING & SANDBOX VERIFICATION ───────────────────────────
+  package-windows:
+    name: Windows Packaging & Sandbox
+    needs: [test-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Odin compiler
+        uses: ./.github/actions/setup-odin
+
+      - name: Setup Windows toolchain & Packaging tools
+        uses: ./.github/actions/setup-windows-toolchain
+        with:
+          with-packaging: "true"
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build Windows Dependencies
+        run: task build-win-deps
+
+      - name: Build Windows Release Binary
+        run: task build-win-release
+
+      - name: Package Windows Release (.tar.zst & .zip)
+        run: task package-win
+
+      - name: Run Sandboxed Distribution Test under Wine
+        run: task run-package-win
+
+      - name: Upload Windows Packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: suckless-odin-windows-packages
+          path: |
+            build-release/suckless-odin-windows-*.tar.zst
+            build-release/suckless-odin-windows-*.zip

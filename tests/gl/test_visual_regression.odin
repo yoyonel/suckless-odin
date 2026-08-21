@@ -268,6 +268,7 @@ render_viewpoint :: proc(s: ^sc.Scene, rt: ^Render_Target, vp: Viewpoint) {
 
 	sc.scene_render(s, rt.width, rt.height)
 
+	gl.Finish()
 	gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
 }
 
@@ -360,6 +361,17 @@ test_visual_scene_multi_view :: proc(t: ^testing.T) {
 		testing.expect(t, false, "IBL pipeline and transition did not complete within timeout")
 		return
 	}
+
+	// Steady-state stabilization frames: drain any lingering GPU commands and ensure FBO convergence
+	for _ in 0..<5 {
+		sc.scene_update(&s, 0.016)
+		gl.BindFramebuffer(gl.FRAMEBUFFER, rt.fbo)
+		gl.Viewport(0, 0, rt.width, rt.height)
+		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+		sc.scene_render(&s, rt.width, rt.height)
+		gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
+	}
+	gl.Finish()
 
 	// Render and check all 6 viewpoints
 	viewpoints := VIEWPOINTS

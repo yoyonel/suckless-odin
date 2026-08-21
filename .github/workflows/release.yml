@@ -1,0 +1,135 @@
+name: Suckless-Odin Release
+
+permissions:
+  contents: write
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version tag (e.g. v0.1.0)'
+        required: true
+        default: 'v0.1.0'
+
+env:
+  ODIN_VERSION: "dev-2026-05"
+  ODIN_URL: "https://github.com/odin-lang/Odin/releases/download/dev-2026-05/odin-linux-amd64-dev-2026-05.tar.gz"
+  GLFW_VERSION: "3.4"
+
+jobs:
+  # ─── BUILD LINUX PACKAGES ───────────────────────────────────────────────────
+  build-linux-packages:
+    name: Build & Package Linux Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Setup Odin compiler
+        uses: ./.github/actions/setup-odin
+
+      - name: Cache GLFW ${{ env.GLFW_VERSION }}
+        id: cache-glfw
+        uses: actions/cache@v4
+        with:
+          path: glfw-install
+          key: glfw-${{ env.GLFW_VERSION }}-shared-ubuntu-latest
+
+      - name: Build GLFW from source (shared)
+        if: steps.cache-glfw.outputs.cache-hit != 'true'
+        run: bash scripts/ci/build_glfw_shared.sh "$GITHUB_WORKSPACE/glfw-install"
+
+      - name: Install GLFW to system
+        run: bash scripts/ci/install_glfw_system.sh glfw-install
+
+      - name: Build ImGui
+        run: bash scripts/ci/build_imgui_linux.sh
+
+      - name: Package Linux Release (.tar.zst & .zip)
+        run: |
+          VERSION="${{ github.ref_name }}"
+          [ "$VERSION" = "" ] || [ "$VERSION" = "master" ] || [ "$VERSION" = "main" ] && VERSION="${{ github.event.inputs.version || 'v0.1.0' }}"
+          odin build src/ -out:build/release/suckless-odin -o:speed -use-separate-modules -extra-linker-flags:"-lX11"
+          ./scripts/package_linux.sh "$VERSION"
+
+      - name: Upload Linux Packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-linux-packages
+          path: |
+            build-release/suckless-odin-linux-*.tar.zst
+            build-release/suckless-odin-linux-*.zip
+
+  # ─── BUILD WINDOWS PACKAGES ─────────────────────────────────────────────────
+  build-windows-packages:
+    name: Build & Package Windows Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Odin compiler
+        uses: ./.github/actions/setup-odin
+
+      - name: Setup Windows cross-compilation toolchain
+        uses: ./.github/actions/setup-windows-toolchain
+        with:
+          with-packaging: "true"
+
+      - name: Build Windows Dependencies
+        run: task build-win-deps
+
+      - name: Build Windows Release Binary
+        run: task build-win-release
+
+      - name: Package Windows Release (.tar.zst & .zip)
+        run: |
+          VERSION="${{ github.ref_name }}"
+          [ "$VERSION" = "" ] || [ "$VERSION" = "master" ] || [ "$VERSION" = "main" ] && VERSION="${{ github.event.inputs.version || 'v0.1.0' }}"
+          ./scripts/package_win.sh "$VERSION"
+
+      - name: Upload Windows Packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-windows-packages
+          path: |
+            build-release/suckless-odin-windows-*.tar.zst
+            build-release/suckless-odin-windows-*.zip
+
+  # ─── PUBLISH GITHUB RELEASE ─────────────────────────────────────────────────
+  publish-release:
+    name: Publish GitHub Release
+    needs: [build-linux-packages, build-windows-packages]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all package artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: Generate Checksums
+        run: |
+          cd release-artifacts
+          sha256sum suckless-odin-* > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Suckless-Odin ${{ github.ref_name }}"
+          draft: false
+          prerelease: false
+          files: |
+            release-artifacts/suckless-odin-*.tar.zst
+            release-artifacts/suckless-odin-*.zip
+            release-artifacts/SHA256SUMS.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

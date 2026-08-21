@@ -21,6 +21,7 @@ Cli_Options :: struct {
 	benchmark_frames: i32,
 	vsync:            bool,
 	compute_profile:  settings.Compute_Shader_Profile,
+	capture_ibl:      bool,
 }
 
 BENCHMARK_DEFAULT_FRAMES :: 300
@@ -33,6 +34,7 @@ DEFAULT_CLI_OPTIONS :: Cli_Options{
 	benchmark_frames = BENCHMARK_DEFAULT_FRAMES,
 	vsync            = false,
 	compute_profile  = .Legacy,
+	capture_ibl      = false,
 }
 
 
@@ -56,6 +58,8 @@ cli_handle_args :: proc(args: []string) -> (Cli_Options, Cli_Action) {
 			opts.postfx_enabled = false
 		case arg == "--vsync":
 			opts.vsync = true
+		case arg == "--capture-ibl":
+			opts.capture_ibl = true
 		case arg == "--benchmark":
 			opts.benchmark = true
 		case strings.has_prefix(arg, "--benchmark-frames="):

@@ -22,28 +22,12 @@ jobs:
           submodules: true
 
       # --- Étape 1 : Cache & Setup Odin ---
-      - name: Cache Odin compiler
-        uses: actions/cache@v4
-        with:
-          path: /opt/odin
-          key: odin-${{ env.ODIN_VERSION }}-linux-amd64
-
-      - name: Install Odin
-        run: |
-          if [ ! -f /opt/odin/odin ]; then
-            mkdir -p /opt/odin
-            curl -sSL "$ODIN_URL" | tar xz -C /opt/odin --strip-components=1
-            make -C /opt/odin/vendor/stb/src
-          fi
-          echo "/opt/odin" >> "$GITHUB_PATH"
+      - name: Setup Odin compiler
+        uses: ./.github/actions/setup-odin
 
       # --- Étape 2 : Systèmes & Dépendances ---
       - name: Install system dependencies (Mesa + xvfb)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libgl1-mesa-dev libc++-dev libx11-dev \
-            mesa-utils xvfb
+        run: bash scripts/ci/setup_linux_system.sh gl
 
       # --- Étape 3 : Cache & Chargement GLFW / ImGui ---
       - name: Cache GLFW ${{ env.GLFW_VERSION }}
@@ -53,23 +37,23 @@ jobs:
           path: glfw-install
           key: glfw-${{ env.GLFW_VERSION }}-shared-ubuntu-latest
 
+      - name: Build GLFW from source (shared)
+        if: steps.cache-glfw.outputs.cache-hit != 'true'
+        run: bash scripts/ci/build_glfw_shared.sh "$GITHUB_WORKSPACE/glfw-install"
+
       - name: Install GLFW to system
-        run: |
-          sudo cp -a glfw-install/lib/* /usr/local/lib/
-          sudo cp -a glfw-install/include/* /usr/local/include/
-          cd /usr/local/lib && sudo ln -sf libglfw.so.3 libglfw.so 2>/dev/null || true
-          sudo ldconfig
+        run: bash scripts/ci/install_glfw_system.sh glfw-install
 
       - name: Cache ImGui library
+        id: cache-imgui
         uses: actions/cache@v4
         with:
           path: deps/odin-imgui/imgui_linux_x64.a
           key: imgui-${{ hashFiles('deps/odin-imgui/build.py', 'scripts/build_imgui_parallel.py') }}
 
-      - name: Copy ImGui library to target
-        run: |
-          mkdir -p deps/odin-imgui
-          # ImGui .a should be cached, if not it will compile or be copied from cache
+      - name: Build ImGui
+        if: steps.cache-imgui.outputs.cache-hit != 'true'
+        run: bash scripts/ci/build_imgui_linux.sh
 
       # --- Étape 4 : Configuration des Core Dumps ---
       - name: Configure Core Dumps

@@ -65,27 +65,10 @@ ibl_init :: proc(ibl: ^IBL_Resources, tuning: settings.Compute_Tuning_Params) ->
 
 	gl.BindTexture(gl.TEXTURE_2D, 0)
 
-	// Placeholder black textures for irradiance and prefilter.
-	// These are bound during first-load while IBL is computing progressively.
-	// Without them, the PBR shader samples texture 0 (undefined GPU memory residues).
-	// Replaced by env_manager_swap_textures once IBL pipeline completes.
-	black_pixel := [4]f32{0.0, 0.0, 0.0, 1.0}
-
-	gl.GenTextures(1, &ibl.irradiance_map)
-	gl.BindTexture(gl.TEXTURE_2D, ibl.irradiance_map)
-	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, 1, 1, 0, gl.RGBA, gl.FLOAT, &black_pixel[0])
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
-	dbg.object_label(gl.TEXTURE, ibl.irradiance_map, "IBL_Irradiance_Placeholder")
-
-	gl.GenTextures(1, &ibl.prefilter_map)
-	gl.BindTexture(gl.TEXTURE_2D, ibl.prefilter_map)
-	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, 1, 1, 0, gl.RGBA, gl.FLOAT, &black_pixel[0])
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
-	dbg.object_label(gl.TEXTURE, ibl.prefilter_map, "IBL_Prefilter_Placeholder")
-
-	gl.BindTexture(gl.TEXTURE_2D, 0)
+	// Irradiance and prefilter maps are managed by the Env_Manager double-buffered pool.
+	// Initialized to 0 here and bound to the pool at scene creation.
+	ibl.irradiance_map = 0
+	ibl.prefilter_map  = 0
 
 	return true
 }
@@ -115,10 +98,10 @@ ibl_update_brdf_lut :: proc(ibl: ^IBL_Resources) {
 	gl.BindImageTexture(0, ibl.brdf_lut, 0, false, 0, gl.WRITE_ONLY, gl.RG16F)
 
 	// Dispatch 32 rows progressively (512x32)
-	// Local work group size in shader: local_size_x = 32, local_size_y = 32
-	// For width=512: gx = 512 / 32 = 16
-	// For height=32: gy = 32 / 32 = 1
-	gl.DispatchCompute(16, 1, 1)
+	// Local work group size in shader: local_size_x = 16, local_size_y = 16 (OPT-05)
+	// For width=512: gx = 512 / 16 = 32
+	// For height=32: gy = 32 / 16 = 2
+	gl.DispatchCompute(32, 2, 1)
 	gl.MemoryBarrier(gl.TEXTURE_FETCH_BARRIER_BIT)
 	dbg.pop_group()
 
@@ -154,12 +137,10 @@ ibl_recompile_shaders :: proc(ibl: ^IBL_Resources, tuning: settings.Compute_Tuni
 }
 
 ibl_destroy :: proc(ibl: ^IBL_Resources) {
-	if ibl.irradiance_map != 0 { gl.DeleteTextures(1, &ibl.irradiance_map) }
-	if ibl.prefilter_map  != 0 { gl.DeleteTextures(1, &ibl.prefilter_map) }
-	if ibl.brdf_lut       != 0 { gl.DeleteTextures(1, &ibl.brdf_lut) }
-	if ibl.irmap_program  != 0 { gl.DeleteProgram(ibl.irmap_program) }
-	if ibl.spmap_program  != 0 { gl.DeleteProgram(ibl.spmap_program) }
-	if ibl.spbrdf_program != 0 { gl.DeleteProgram(ibl.spbrdf_program) }
+	if ibl.brdf_lut       != 0 { gl.DeleteTextures(1, &ibl.brdf_lut); ibl.brdf_lut = 0 }
+	if ibl.irmap_program  != 0 { gl.DeleteProgram(ibl.irmap_program); ibl.irmap_program = 0 }
+	if ibl.spmap_program  != 0 { gl.DeleteProgram(ibl.spmap_program); ibl.spmap_program = 0 }
+	if ibl.spbrdf_program != 0 { gl.DeleteProgram(ibl.spbrdf_program); ibl.spbrdf_program = 0 }
 	ibl^ = {}
 }
 

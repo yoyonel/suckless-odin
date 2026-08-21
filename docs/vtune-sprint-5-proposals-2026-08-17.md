@@ -60,7 +60,7 @@ Remplacer le format de texture intermédiaire `GL_RGBA16F` (64 bits par pixel, 4
 ### 🚀 Piste B : Buffers Persistants Mappés AZDO (*Approaching Zero Driver Overhead*)
 
 #### A. Description & Mécanisme Technique
-Dans [`src/rendering/instanced.odin`](file:///home/latty/Prog/__PERSO__/suckless-odin/src/rendering/instanced.odin), remplacer la gestion de buffer dynamique standard (`glBufferData` / `glBufferSubData`) par un stockage immuable `glBufferStorage` doté des drapeaux `GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT`.  
+Dans [`src/rendering/instanced.odin`](../src/rendering/instanced.odin), remplacer la gestion de buffer dynamique standard (`glBufferData` / `glBufferSubData`) par un stockage immuable `glBufferStorage` doté des drapeaux `GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT`.  
 Le buffer est partitionné en 3 tranches (Triple-Buffering) et le CPU écrit directement dans la tranche active via son pointeur mémoire permanent sans aucun appel système ni re-binding OpenGL par frame.
 
 #### B. Gains Espérés
@@ -93,7 +93,7 @@ Le buffer est partitionné en 3 tranches (Triple-Buffering) et le CPU écrit dir
 ### 🚀 Piste C : Optimisation Workgroups & Importance Sampling IBL GPU
 
 #### A. Description & Mécanisme Technique
-Dans [`shaders/IBL/spmap.glsl`](file:///home/latty/Prog/__PERSO__/suckless-odin/shaders/IBL/spmap.glsl) (filtrage spéculaire GGX) et [`shaders/IBL/irmap.glsl`](file:///home/latty/Prog/__PERSO__/suckless-odin/shaders/IBL/irmap.glsl) (irradiance diffuse) :
+Dans [`shaders/IBL/spmap.glsl`](../shaders/IBL/spmap.glsl) (filtrage spéculaire GGX) et [`shaders/IBL/irmap.glsl`](../shaders/IBL/irmap.glsl) (irradiance diffuse) :
 1. **Pré-calcul de la séquence de Hammersley** : Remplacer l'inversion de bits bit-par-bit `bitfieldReverse` exécutée dynamiquement pour chaque échantillon dans le shader par une table de constantes stockée en mémoire partagée (`shared memory`) ou dans un UBO invariant.
 2. **Calibration des Tailles de Workgroups** : Adapter `local_size_x` et `local_size_y` (ex: `16x16` = 256 threads ou `8x8` = 64 threads) pour maximiser l'occupation des Execution Units (EU) de l'architecture graphique Intel Xe (SIMD8/SIMD16).
 

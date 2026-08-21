@@ -27,7 +27,7 @@ Profil capturé sur session interactive normalisée (initialisation + cycle HDR 
 
 ### 🎯 Plan A : Turbo-Inlining RLE & Vectorisation Pure FP16
 
-* **Fichier cible** : [`deps/simd_utils.c`](file:///home/latty/Prog/__PERSO__/suckless-odin/deps/simd_utils.c)
+* **Fichier cible** : [`deps/simd_utils.c`](../deps/simd_utils.c)
 * **Composant** : Décodeur Radiance RGBE 4K multi-threadé (`decode_scanline_slice`).
 
 #### 1. Description Technique & Modifications
@@ -68,7 +68,7 @@ task profile-tracy      # Réduction de la durée 'Async Loader: Decode File'
 
 ### 🎯 Plan B : Caching des Uniforms & Dirty-Checking Text Overlay
 
-* **Fichier cible** : [`src/rendering/overlay.odin`](file:///home/latty/Prog/__PERSO__/suckless-odin/src/rendering/overlay.odin)
+* **Fichier cible** : [`src/rendering/overlay.odin`](../src/rendering/overlay.odin)
 * **Composant** : Rendu de l'overlay texte de debug / HUD (`overlay_render`, `append_text_vertices`).
 
 #### 1. Description Technique & Modifications

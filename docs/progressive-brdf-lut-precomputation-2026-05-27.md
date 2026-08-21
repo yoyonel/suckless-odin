@@ -63,12 +63,12 @@ This guarantees that the application context gets full interactive frame control
 
 ## File Structure and Layout
 
-1.  **Compute Shader**: [spbrdf.glsl](file:///home/latty/Prog/__PERSO__/suckless-odin/shaders/IBL/spbrdf.glsl)
+1.  **Compute Shader**: [spbrdf.glsl](../shaders/IBL/spbrdf.glsl)
     -   Accepts `layout(location = 0) uniform int u_row_offset;`
     -   Offsets vertical coord: `coord.y += u_row_offset;` before bounds validation.
-2.  **IBL Library**: [ibl.odin](file:///home/latty/Prog/__PERSO__/suckless-odin/src/rendering/ibl.odin)
+2.  **IBL Library**: [ibl.odin](../src/rendering/ibl.odin)
     -   Defines `brdf_lut_computed` and `brdf_lut_row_offset` in `IBL_Resources`.
     -   Allocates `512x512` RG16F texture storage instantly via `TexStorage2D` inside `ibl_init` (no stalls).
     -   Executes 32-row slices progressively inside `ibl_update_brdf_lut` without a blocking `gl.Finish()`.
-3.  **Scene Coordinator**: [scene.odin](file:///home/latty/Prog/__PERSO__/suckless-odin/src/scene/scene.odin)
+3.  **Scene Coordinator**: [scene.odin](../src/scene/scene.odin)
     -   Updates the slice at the beginning of `scene_update` if computation is pending.

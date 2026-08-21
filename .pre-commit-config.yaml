@@ -33,7 +33,7 @@ repos:
       # Pre-push: full build + test suite
       - id: odin-build
         name: odin build (debug)
-        entry: bash -c 'mkdir -p build/debug && odin build src/ -out:build/debug/suckless-odin -debug -extra-linker-flags:"-L/home/linuxbrew/.linuxbrew/lib -Wl,-rpath,/home/linuxbrew/.linuxbrew/lib -lX11"'
+        entry: task build
         language: system
         pass_filenames: false
         always_run: true

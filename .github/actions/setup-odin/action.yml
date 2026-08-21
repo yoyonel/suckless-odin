@@ -1,0 +1,27 @@
+name: "Setup Odin Compiler"
+description: "Downloads, installs, and caches the Odin compiler"
+inputs:
+  odin-version:
+    description: "Odin compiler release version"
+    required: false
+    default: "dev-2026-05"
+  odin-url:
+    description: "URL to Odin release archive"
+    required: false
+    default: "https://github.com/odin-lang/Odin/releases/download/dev-2026-05/odin-linux-amd64-dev-2026-05.tar.gz"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Cache Odin compiler
+      uses: actions/cache@v4
+      with:
+        path: /opt/odin
+        key: odin-${{ inputs.odin-version }}-linux-amd64
+
+    - name: Install Odin
+      shell: bash
+      env:
+        ODIN_VERSION: ${{ inputs.odin-version }}
+        ODIN_URL: ${{ inputs.odin-url }}
+      run: bash scripts/ci/setup_odin.sh

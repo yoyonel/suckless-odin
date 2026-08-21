@@ -1,0 +1,30 @@
+name: "Setup Linux Dependencies"
+description: "Downloads cached GLFW and ImGui artifacts and sets up system libraries"
+inputs:
+  mode:
+    description: "Setup mode: 'build' or 'gl'"
+    required: false
+    default: "build"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install system libraries
+      shell: bash
+      run: bash scripts/ci/setup_linux_system.sh "${{ inputs.mode }}"
+
+    - name: Download GLFW
+      uses: actions/download-artifact@v4
+      with:
+        name: glfw-install
+        path: glfw-install
+
+    - name: Install GLFW to system
+      shell: bash
+      run: bash scripts/ci/install_glfw_system.sh glfw-install
+
+    - name: Download ImGui library
+      uses: actions/download-artifact@v4
+      with:
+        name: imgui-lib
+        path: deps/odin-imgui

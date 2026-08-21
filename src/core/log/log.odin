@@ -2,7 +2,6 @@ package applog
 
 import "core:fmt"
 import "core:time"
-import "core:sys/linux"
 import tracy "../tracy"
 
 // Severity levels for log filtering (mirrors C version)
@@ -50,8 +49,7 @@ log_message :: proc(level: Log_Level, tag: string, format: string, args: ..any) 
 	hour, min, sec := time.clock(now)
 	ms := time.duration_milliseconds(time.Duration(now._nsec % 1_000_000_000)) 
 
-	pid := linux.getpid()
-	tid := linux.gettid()
+	pid, tid := get_pid_tid()
 
 	formatted := fmt.tprintf("%04d-%02d-%02d %02d:%02d:%02d,%03d [%d:%d] - %s - %-8s - %s",
 		year, int(month), day, hour, min, sec, int(ms), int(pid), int(tid),

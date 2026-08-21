@@ -11,6 +11,7 @@ package scene
 //   - Black_Screen: fade to black → swap → fade from black
 //   - Crossfade: capture snapshot → swap → blend snapshot over new
 
+import "base:intrinsics"
 import "core:fmt"
 import "core:c/libc"
 import "core:mem"
@@ -23,6 +24,8 @@ import log "../core/log"
 import "../rendering"
 import settings "../core/settings"
 import tracy "../core/tracy"
+import itt "../core/itt"
+import renderdoc "../core/renderdoc"
 
 // --- Transition mode (ISO: EnvTransitionMode enum) ---
 
@@ -44,6 +47,13 @@ IBL_THRESHOLD_FALLBACK_MIN :: 1.0 // ISO: ibl_coordinator.c — reject threshold
 // Tracy message color for IBL pipeline (cyan/teal — matches Nord frost palette)
 IBL_TRACY_COLOR :: 0x88C0D0
 DEFAULT_AUTO_THRESHOLD   :: 5.0   // ISO: fallback if luminance computation fails
+
+// Persistent Ring-Buffer PBO for Zero-Stall HDR streaming (OPT-06-PBO)
+UPLOAD_PBO_SLOTS      :: 3
+UPLOAD_MAX_WIDTH      :: 4096
+UPLOAD_ROWS_PER_FRAME :: 256
+UPLOAD_SLOT_BYTES     :: int(UPLOAD_ROWS_PER_FRAME) * int(UPLOAD_MAX_WIDTH) * 4 * size_of(u16)
+UPLOAD_TOTAL_BYTES    :: UPLOAD_PBO_SLOTS * UPLOAD_SLOT_BYTES
 
 // --- Env Manager struct (ISO: EnvManager) ---
 
@@ -77,7 +87,18 @@ Env_Manager :: struct {
 	pending_spec_tex: u32,
 	pending_irr_tex:  u32,
 	luminance_pbo:    u32,
+
+	// Persistent Triple-Buffered Ring-Buffer Upload PBO (OPT-06-PBO)
 	upload_pbo:       u32,
+	upload_pbo_ptr:   rawptr,
+	upload_ring_slot: int,
+	upload_fences:    [UPLOAD_PBO_SLOTS]gl.sync_t,
+
+	// Immutable IBL Texture Pools (OPT-04: zero runtime allocation/deallocation on env switch)
+	specular_pool:    [2]u32,
+	irradiance_pool:  [2]u32,
+	pool_active_idx:  int,
+	pool_initialized: bool,
 
 	// Overlay and Transition resources
 	debug_program:           u32,
@@ -94,6 +115,9 @@ Env_Manager :: struct {
 	ibl_prev_state:          IBL_State,
 	ibl_elapsed:             f32,
 	load_start_tick:         time.Tick,
+
+	// Diagnostics & programmatic capture
+	capture_ibl:             bool,
 }
 
 // --- Public API ---
@@ -162,18 +186,86 @@ env_manager_create :: proc(mgr: ^Env_Manager, tuning := settings.DEFAULT_COMPUTE
 	// Generate empty VAO for procedural full-screen rendering
 	gl.GenVertexArrays(1, &mgr.overlay_vao)
 
-	log.log_info("suckless-odin.env", "Env manager created")
+	// Initialize Immutable Double-Buffered IBL Texture Pools (OPT-04)
+	for i in 0 ..< 2 {
+		gl.GenTextures(1, &mgr.specular_pool[i])
+		gl.BindTexture(gl.TEXTURE_2D, mgr.specular_pool[i])
+		gl.TexStorage2D(
+			gl.TEXTURE_2D,
+			rendering.PREFILTER_MIP_LEVELS,
+			gl.RGBA16F,
+			rendering.PREFILTER_SIZE,
+			rendering.PREFILTER_SIZE,
+		)
+		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT)
+		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR)
+		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+		dbg.object_label(gl.TEXTURE, mgr.specular_pool[i], fmt.ctprintf("IBL_Prefiltered_Specular_Pool_%d", i))
+
+		gl.GenTextures(1, &mgr.irradiance_pool[i])
+		gl.BindTexture(gl.TEXTURE_2D, mgr.irradiance_pool[i])
+		gl.TexStorage2D(gl.TEXTURE_2D, 1, gl.RGBA16F, rendering.IRRADIANCE_SIZE, rendering.IRRADIANCE_SIZE)
+		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT)
+		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+		dbg.object_label(gl.TEXTURE, mgr.irradiance_pool[i], fmt.ctprintf("IBL_Irradiance_Map_Pool_%d", i))
+	}
+	gl.BindTexture(gl.TEXTURE_2D, 0)
+	mgr.pool_active_idx = 0
+	mgr.pool_initialized = true
+
+	// Initialize Persistent Triple-Buffered Ring Upload PBO (OPT-06-PBO)
+	gl.GenBuffers(1, &mgr.upload_pbo)
+	gl.BindBuffer(gl.PIXEL_UNPACK_BUFFER, mgr.upload_pbo)
+	flags: u32 = gl.MAP_WRITE_BIT | gl.MAP_PERSISTENT_BIT | gl.MAP_COHERENT_BIT
+	gl.BufferStorage(gl.PIXEL_UNPACK_BUFFER, UPLOAD_TOTAL_BYTES, nil, flags | gl.DYNAMIC_STORAGE_BIT)
+	mgr.upload_pbo_ptr = gl.MapBufferRange(gl.PIXEL_UNPACK_BUFFER, 0, UPLOAD_TOTAL_BYTES, flags)
+	gl.BindBuffer(gl.PIXEL_UNPACK_BUFFER, 0)
+	dbg.object_label(gl.BUFFER, mgr.upload_pbo, "IBL_Persistent_Upload_PBO")
+	mgr.upload_ring_slot = 0
+	for &fence in mgr.upload_fences {
+		fence = nil
+	}
+
+	log.log_info("suckless-odin.env", "Env manager created (Immutable IBL Pools & Persistent Ring PBO initialized)")
 	return true
 }
 
 env_manager_destroy :: proc(mgr: ^Env_Manager) {
 	async_loader_destroy(&mgr.loader)
 
+	// Clean up IBL immutable texture pools (OPT-04)
+	if mgr.pool_initialized {
+		for i in 0 ..< 2 {
+			if mgr.specular_pool[i] != 0 { gl.DeleteTextures(1, &mgr.specular_pool[i]); mgr.specular_pool[i] = 0 }
+			if mgr.irradiance_pool[i] != 0 { gl.DeleteTextures(1, &mgr.irradiance_pool[i]); mgr.irradiance_pool[i] = 0 }
+		}
+		mgr.pool_initialized = false
+	}
+
+	// Clean up persistent upload PBO and fences (OPT-06-PBO)
+	if mgr.upload_pbo != 0 {
+		gl.BindBuffer(gl.PIXEL_UNPACK_BUFFER, mgr.upload_pbo)
+		if mgr.upload_pbo_ptr != nil {
+			gl.UnmapBuffer(gl.PIXEL_UNPACK_BUFFER)
+			mgr.upload_pbo_ptr = nil
+		}
+		gl.DeleteBuffers(1, &mgr.upload_pbo)
+		mgr.upload_pbo = 0
+	}
+	for &fence in mgr.upload_fences {
+		if fence != nil {
+			gl.DeleteSync(fence)
+			fence = nil
+		}
+	}
+
 	// Clean up any pending textures and buffers
-	if mgr.pending_hdr_tex != 0 { gl.DeleteTextures(1, &mgr.pending_hdr_tex) }
-	if mgr.pending_spec_tex != 0 { gl.DeleteTextures(1, &mgr.pending_spec_tex) }
-	if mgr.pending_irr_tex != 0 { gl.DeleteTextures(1, &mgr.pending_irr_tex) }
-	if mgr.luminance_pbo != 0 { gl.DeleteBuffers(1, &mgr.luminance_pbo) }
+	if mgr.pending_hdr_tex != 0 { gl.DeleteTextures(1, &mgr.pending_hdr_tex); mgr.pending_hdr_tex = 0 }
+	mgr.pending_spec_tex = 0
+	mgr.pending_irr_tex = 0
 
 	// Clean up transition and overlay resources
 	if mgr.debug_program != 0 { gl.DeleteProgram(mgr.debug_program) }
@@ -183,10 +275,6 @@ env_manager_destroy :: proc(mgr: ^Env_Manager) {
 	if mgr.luminance_pbo != 0 {
 		gl.DeleteBuffers(1, &mgr.luminance_pbo)
 		mgr.luminance_pbo = 0
-	}
-	if mgr.upload_pbo != 0 {
-		gl.DeleteBuffers(1, &mgr.upload_pbo)
-		mgr.upload_pbo = 0
 	}
 
 	// Free any unconsumed progressive upload data
@@ -203,8 +291,8 @@ env_manager_destroy :: proc(mgr: ^Env_Manager) {
 env_manager_trigger_transition :: proc(mgr: ^Env_Manager, path: string) -> bool {
 	// Don't trigger if already transitioning
 	if mgr.transition_state != .Idle {
-		log.log_warning("suckless-odin.env", 
-			"Transition already in progress, ignoring. (Current transition state: %v elapsed %.3fs [prev: %v], IBL state: %v elapsed %.3fs [prev: %v])", 
+		log.log_warning("suckless-odin.env",
+			"Transition already in progress, ignoring. (Current transition state: %v elapsed %.3fs [prev: %v], IBL state: %v elapsed %.3fs [prev: %v])",
 			mgr.transition_state, mgr.transition_elapsed, mgr.transition_prev_state,
 			mgr.ibl_state, mgr.ibl_elapsed, mgr.ibl_prev_state)
 		return false
@@ -251,7 +339,7 @@ env_manager_update :: proc(mgr: ^Env_Manager, scene: ^Scene, dt: f32) {
 		}
 		// Invariant 2: If transition is Loading, either loader is active or IBL is active
 		if mgr.transition_state == .Loading {
-			assert(mgr.loader.request.state != .Idle || mgr.ibl_state != .Idle, 
+			assert(mgr.loader.request.state != .Idle || mgr.ibl_state != .Idle,
 				"Invariant Violated: Transition is Loading but loader is Idle and IBL is Idle")
 		}
 	}
@@ -260,7 +348,7 @@ env_manager_update :: proc(mgr: ^Env_Manager, scene: ^Scene, dt: f32) {
 	if mgr.transition_state != .Idle && mgr.transition_elapsed > 5.0 {
 		// Log warning every ~2 seconds (based on frames)
 		if int(mgr.transition_elapsed * 10) % 20 == 0 {
-			log.log_warning("suckless-odin.env", 
+			log.log_warning("suckless-odin.env",
 				"STUCK TRANSITION WARNING: Transition state %v active for %.2fs (prev: %v). IBL state %v active for %.2fs (prev: %v).",
 				mgr.transition_state, mgr.transition_elapsed, mgr.transition_prev_state,
 				mgr.ibl_state, mgr.ibl_elapsed, mgr.ibl_prev_state)
@@ -311,6 +399,12 @@ env_manager_poll_loader :: proc(mgr: ^Env_Manager) {
 		env_manager_set_transition_state(mgr, .Wait_IBL)
 		env_manager_set_ibl_state(mgr, .Upload_Texture)
 		log.log_info("suckless-odin.env", "Async load complete, starting IBL pipeline")
+
+		itt.resume()
+		itt.task_begin("IBL_Progressive_Pipeline")
+		if mgr.capture_ibl && !renderdoc.is_capturing() {
+			renderdoc.start_capture()
+		}
 	case .Failed:
 		env_manager_set_transition_state(mgr, .Idle)
 		log.log_error("suckless-odin.env", "Async load failed, transition aborted to prevent state machine deadlock")
@@ -385,23 +479,52 @@ env_manager_ibl_upload_texture :: proc(mgr: ^Env_Manager, scene: ^Scene) {
 	gl.BindTexture(gl.TEXTURE_2D, 0)
 
 	// Setup progressive slice count: 256 rows per frame
-	UPLOAD_ROWS_PER_FRAME :: 256
 	mgr.ibl_current_slice = 0
 	mgr.ibl_total_slices = (h + UPLOAD_ROWS_PER_FRAME - 1) / UPLOAD_ROWS_PER_FRAME
-
-	// Create PBO for asynchronous DMA texture upload
-	if mgr.upload_pbo == 0 {
-		gl.GenBuffers(1, &mgr.upload_pbo)
-		dbg.object_label(gl.BUFFER, mgr.upload_pbo, "IBL_Upload_PBO")
-	}
-	slice_bytes := int(UPLOAD_ROWS_PER_FRAME) * int(w) * 4 * size_of(u16)
-	gl.BindBuffer(gl.PIXEL_UNPACK_BUFFER, mgr.upload_pbo)
-	gl.BufferData(gl.PIXEL_UNPACK_BUFFER, slice_bytes, nil, gl.STREAM_DRAW)
-	gl.BindBuffer(gl.PIXEL_UNPACK_BUFFER, 0)
+	mgr.upload_ring_slot = 0
 
 	env_manager_set_ibl_state(mgr, .Upload_Progressive)
 
-	log.log_info("suckless-odin.env", "IBL: Texture progressive upload started (%dx%d, PBO DMA active)", w, h)
+	log.log_info("suckless-odin.env", "IBL: Texture progressive upload started (%dx%d, Persistent Ring PBO DMA active)", w, h)
+}
+
+// Fast Non-Temporal AVX2 Streaming Copy for Write-Combining PBO memory (OPT-06-PBO-NT)
+// Unrolls 8x 256-bit SIMD registers (256 bytes per iteration) with L1 prefetching to saturate memory bus.
+Vec256 :: #simd[4]u64
+
+@(private)
+copy_non_temporal_avx2 :: proc "contextless" (dst: rawptr, src: rawptr, byte_count: int) {
+	d := cast([^]Vec256)dst
+	s := cast([^]Vec256)src
+	num_vecs := byte_count / size_of(Vec256)
+
+	i := 0
+	for ; i + 8 <= num_vecs; i += 8 {
+		intrinsics.prefetch_read_data(&s[i + 16], 3)
+		intrinsics.prefetch_read_data(&s[i + 20], 3)
+
+		v0 := s[i + 0]
+		v1 := s[i + 1]
+		v2 := s[i + 2]
+		v3 := s[i + 3]
+		v4 := s[i + 4]
+		v5 := s[i + 5]
+		v6 := s[i + 6]
+		v7 := s[i + 7]
+
+		intrinsics.non_temporal_store(&d[i + 0], v0)
+		intrinsics.non_temporal_store(&d[i + 1], v1)
+		intrinsics.non_temporal_store(&d[i + 2], v2)
+		intrinsics.non_temporal_store(&d[i + 3], v3)
+		intrinsics.non_temporal_store(&d[i + 4], v4)
+		intrinsics.non_temporal_store(&d[i + 5], v5)
+		intrinsics.non_temporal_store(&d[i + 6], v6)
+		intrinsics.non_temporal_store(&d[i + 7], v7)
+	}
+
+	for ; i < num_vecs; i += 1 {
+		intrinsics.non_temporal_store(&d[i], s[i])
+	}
 }
 
 @(private)
@@ -415,7 +538,6 @@ env_manager_ibl_upload_progressive :: proc(mgr: ^Env_Manager) {
 	dbg.push_group("IBL: Upload_HDR_Texture_Slice")
 	defer dbg.pop_group()
 
-	UPLOAD_ROWS_PER_FRAME :: 256
 	w := mgr.async_result.width
 	h := mgr.async_result.height
 	y_offset := mgr.ibl_current_slice * UPLOAD_ROWS_PER_FRAME
@@ -423,29 +545,47 @@ env_manager_ibl_upload_progressive :: proc(mgr: ^Env_Manager) {
 
 	tracy.message_c(fmt.tprintf("IBL: Upload slice %d/%d (rows %d-%d)", mgr.ibl_current_slice + 1, mgr.ibl_total_slices, y_offset, y_offset + slice_h), IBL_TRACY_COLOR)
 
-	// Upload the slice asynchronously via DMA through PBO
+	// Upload slice asynchronously via Persistent Triple-Buffered Ring PBO (OPT-06-PBO)
 	data_offset := int(y_offset) * int(w) * 4
 	slice_data := &mgr.async_result.data[data_offset]
 	slice_bytes := int(slice_h) * int(w) * 4 * size_of(u16)
 
-	gl.BindBuffer(gl.PIXEL_UNPACK_BUFFER, mgr.upload_pbo)
-	// Buffer orphaning for non-blocking asynchronous driver staging
-	gl.BufferData(gl.PIXEL_UNPACK_BUFFER, slice_bytes, nil, gl.STREAM_DRAW)
-	ptr := gl.MapBufferRange(gl.PIXEL_UNPACK_BUFFER, 0, slice_bytes, gl.MAP_WRITE_BIT | gl.MAP_INVALIDATE_BUFFER_BIT | gl.MAP_UNSYNCHRONIZED_BIT)
-	if ptr != nil {
-		mem.copy(ptr, slice_data, slice_bytes)
-		gl.UnmapBuffer(gl.PIXEL_UNPACK_BUFFER)
+	if mgr.upload_pbo_ptr != nil {
+		slot := mgr.upload_ring_slot
+		slot_offset := slot * UPLOAD_SLOT_BYTES
 
+		// If slot has a pending GPU fence, wait (non-blocking first, max 50ms fallback)
+		if mgr.upload_fences[slot] != nil {
+			res := gl.ClientWaitSync(mgr.upload_fences[slot], 0, 0)
+			if res != gl.ALREADY_SIGNALED && res != gl.CONDITION_SATISFIED {
+				gl.ClientWaitSync(mgr.upload_fences[slot], gl.SYNC_FLUSH_COMMANDS_BIT, 50_000_000)
+			}
+			gl.DeleteSync(mgr.upload_fences[slot])
+			mgr.upload_fences[slot] = nil
+		}
+
+		// Direct zero-driver-overhead non-temporal streaming copy into coherent mapped VRAM/GTT pointer
+		dest_ptr := rawptr(uintptr(mgr.upload_pbo_ptr) + uintptr(slot_offset))
+		copy_non_temporal_avx2(dest_ptr, slice_data, slice_bytes)
+
+		// Trigger asynchronous DMA copy from PBO slot to texture
+		gl.BindBuffer(gl.PIXEL_UNPACK_BUFFER, mgr.upload_pbo)
 		gl.BindTexture(gl.TEXTURE_2D, mgr.pending_hdr_tex)
 		gl.TexSubImage2D(
 			gl.TEXTURE_2D, 0, 0, y_offset,
 			w, slice_h,
-			gl.RGBA, gl.HALF_FLOAT, nil,
+			gl.RGBA, gl.HALF_FLOAT, rawptr(uintptr(slot_offset)),
 		)
 		gl.BindTexture(gl.TEXTURE_2D, 0)
-	} else {
-		// Fallback path
 		gl.BindBuffer(gl.PIXEL_UNPACK_BUFFER, 0)
+
+		// Place fence to protect slot until GPU DMA completes
+		mgr.upload_fences[slot] = gl.FenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0)
+
+		// Advance ring slot
+		mgr.upload_ring_slot = (slot + 1) % UPLOAD_PBO_SLOTS
+	} else {
+		// Fallback path without persistent PBO
 		gl.BindTexture(gl.TEXTURE_2D, mgr.pending_hdr_tex)
 		gl.TexSubImage2D(
 			gl.TEXTURE_2D, 0, 0, y_offset,
@@ -454,14 +594,9 @@ env_manager_ibl_upload_progressive :: proc(mgr: ^Env_Manager) {
 		)
 		gl.BindTexture(gl.TEXTURE_2D, 0)
 	}
-	gl.BindBuffer(gl.PIXEL_UNPACK_BUFFER, 0)
 
 	mgr.ibl_current_slice += 1
 	if mgr.ibl_current_slice >= mgr.ibl_total_slices {
-		if mgr.upload_pbo != 0 {
-			gl.DeleteBuffers(1, &mgr.upload_pbo)
-			mgr.upload_pbo = 0
-		}
 		// Free CPU data (FP16 buffer allocated via libc.malloc on worker thread)
 		libc.free(mgr.async_result.data)
 		mgr.async_result.data = nil
@@ -572,31 +707,18 @@ env_manager_ibl_luminance :: proc(mgr: ^Env_Manager) {
 env_manager_ibl_specular_init :: proc(mgr: ^Env_Manager) {
 	dbg.push_group("IBL: Specular_Init")
 	defer dbg.pop_group()
-	tracy.message_c(fmt.tprintf("IBL: Specular init %dx%d, %d mips",
+	tracy.message_c(fmt.tprintf("IBL: Specular init %dx%d, %d mips (pooled)",
 		rendering.PREFILTER_SIZE, rendering.PREFILTER_SIZE, rendering.PREFILTER_MIP_LEVELS), IBL_TRACY_COLOR)
 
-	// ISO C11: process_specular_init — allocate texture + init counters, no dispatch.
-	gl.GenTextures(1, &mgr.pending_spec_tex)
-	gl.BindTexture(gl.TEXTURE_2D, mgr.pending_spec_tex)
-	gl.TexStorage2D(
-		gl.TEXTURE_2D,
-		rendering.PREFILTER_MIP_LEVELS,
-		gl.RGBA16F,
-		rendering.PREFILTER_SIZE,
-		rendering.PREFILTER_SIZE,
-	)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
-	dbg.object_label(gl.TEXTURE, mgr.pending_spec_tex, "IBL_Prefiltered_Specular")
-	gl.BindTexture(gl.TEXTURE_2D, 0)
+	// Reuse pending slot from immutable pool (OPT-04: zero runtime allocation)
+	pending_idx := 1 - mgr.pool_active_idx
+	mgr.pending_spec_tex = mgr.specular_pool[pending_idx]
 
 	mgr.ibl_total_mips = rendering.PREFILTER_MIP_LEVELS
 	mgr.ibl_current_mip = 0
 	mgr.ibl_current_slice = 0
 	env_manager_set_ibl_state(mgr, .Specular_Mips)
-	log.log_info("suckless-odin.env", "IBL: Specular texture allocated, starting progressive mips")
+	log.log_info("suckless-odin.env", "IBL: Reusing pooled specular texture (slot %d, zero alloc), starting progressive mips", pending_idx)
 }
 
 @(private)
@@ -612,6 +734,12 @@ env_manager_ibl_done :: proc(mgr: ^Env_Manager, scene: ^Scene) {
 	sync_zone := tracy.hybrid_perf_zone_begin(&tracy.SRCLOC_HYBRID_SYNC)
 	gl.MemoryBarrier(gl.TEXTURE_FETCH_BARRIER_BIT | gl.SHADER_IMAGE_ACCESS_BARRIER_BIT)
 	tracy.hybrid_perf_zone_end(sync_zone)
+
+	itt.task_end()
+	itt.pause()
+	if renderdoc.is_capturing() {
+		renderdoc.end_capture()
+	}
 
 	// Store transition_state before we set it, or simply use it in the switch
 	transition_state := mgr.transition_state
@@ -877,12 +1005,12 @@ env_manager_dispatch_specular_mip :: proc(
 	gl.BindImageTexture(1, mgr.pending_spec_tex, mip, false, 0, gl.WRITE_ONLY, gl.RGBA16F)
 	gl.Uniform1f(gl.GetUniformLocation(ibl.spmap_program, "roughnessValue"), roughness)
 	gl.Uniform1i(gl.GetUniformLocation(ibl.spmap_program, "currentMipLevel"), mip)
-	gl.Uniform1f(gl.GetUniformLocation(ibl.spmap_program, "clampThreshold"), mgr.ibl_clamp_threshold)
+	gl.Uniform1f(gl.GetUniformLocation(ibl.spmap_program, "clamp_threshold"), mgr.ibl_clamp_threshold)
 	gl.Uniform1i(gl.GetUniformLocation(ibl.spmap_program, "u_offset_y"), y_start)
 	gl.Uniform1i(gl.GetUniformLocation(ibl.spmap_program, "u_max_y"), y_end)
 
-	gx := (mip_w + 31) / 32
-	gy := (actual_lines + 31) / 32
+	gx := (mip_w + 15) / 16
+	gy := (actual_lines + 15) / 16
 	gl.DispatchCompute(u32(gx), u32(gy), 1)
 	// ISO C11: "No barrier here: caller is responsible for issuing a single
 	// glMemoryBarrier after all slices are dispatched. Slices write to disjoint
@@ -890,23 +1018,17 @@ env_manager_dispatch_specular_mip :: proc(
 	// The single barrier is in .Done state before swap.
 }
 
-// Transition from specular to irradiance: allocate irradiance texture + reset counters.
+// Transition from specular to irradiance: select pending irradiance slot from pool.
 @(private)
 env_manager_start_irradiance :: proc(mgr: ^Env_Manager) {
-	gl.GenTextures(1, &mgr.pending_irr_tex)
-	gl.BindTexture(gl.TEXTURE_2D, mgr.pending_irr_tex)
-	gl.TexStorage2D(gl.TEXTURE_2D, 1, gl.RGBA16F, rendering.IRRADIANCE_SIZE, rendering.IRRADIANCE_SIZE)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
-	dbg.object_label(gl.TEXTURE, mgr.pending_irr_tex, "IBL_Irradiance_Map")
-	gl.BindTexture(gl.TEXTURE_2D, 0)
+	// Reuse pending slot from immutable pool (OPT-04: zero runtime allocation)
+	pending_idx := 1 - mgr.pool_active_idx
+	mgr.pending_irr_tex = mgr.irradiance_pool[pending_idx]
 
 	mgr.ibl_current_slice = 0
 	mgr.ibl_total_slices = mgr.compute_tuning.slicing.irdiff_slices
 	env_manager_set_ibl_state(mgr, .Irradiance)
-	log.log_info("suckless-odin.env", "IBL: Specular complete, starting irradiance (%d slices)", mgr.compute_tuning.slicing.irdiff_slices)
+	log.log_info("suckless-odin.env", "IBL: Specular complete, starting irradiance on pooled texture (slot %d, %d slices)", pending_idx, mgr.compute_tuning.slicing.irdiff_slices)
 }
 
 // --- Internal: irradiance computation (ONE SLICE PER FRAME) ---
@@ -951,8 +1073,8 @@ env_manager_process_irradiance_slice :: proc(mgr: ^Env_Manager, ibl: ^rendering.
 	gl.Uniform1i(gl.GetUniformLocation(ibl.irmap_program, "u_offset_y"), y_start)
 	gl.Uniform1i(gl.GetUniformLocation(ibl.irmap_program, "u_max_y"), y_end)
 
-	gx := (size + 31) / 32
-	gy := (actual_lines + 31) / 32
+	gx := (size + 15) / 16
+	gy := (actual_lines + 3) / 4
 	gl.DispatchCompute(u32(gx), u32(gy), 1)
 	// ISO C11: no barrier between slices — disjoint Y-ranges.
 	// Single barrier issued in .Done state before swap.
@@ -1014,24 +1136,25 @@ env_manager_capture_snapshot :: proc(mgr: ^Env_Manager, width, height: i32) {
 env_manager_swap_textures :: proc(mgr: ^Env_Manager, scene: ^Scene) {
 	// Instead of destroying scene.env_texture, recycle the HDR texture
 	if scene.env_texture.id != 0 {
-		if mgr.recycled_hdr_tex != 0 {
+		if mgr.recycled_hdr_tex != 0 && mgr.recycled_hdr_tex != scene.env_texture.id {
 			gl.DeleteTextures(1, &mgr.recycled_hdr_tex)
 		}
 		mgr.recycled_hdr_tex = scene.env_texture.id
 		scene.env_texture.id = 0
 	}
 
-	if scene.ibl.irradiance_map != 0 { gl.DeleteTextures(1, &scene.ibl.irradiance_map) }
-	if scene.ibl.prefilter_map != 0 { gl.DeleteTextures(1, &scene.ibl.prefilter_map) }
+	// Swap active IBL pool slot (OPT-04: zero runtime allocation/deallocation)
+	pending_idx := 1 - mgr.pool_active_idx
+	scene.ibl.prefilter_map = mgr.specular_pool[pending_idx]
+	scene.ibl.irradiance_map = mgr.irradiance_pool[pending_idx]
+	mgr.pool_active_idx = pending_idx
 
-	// Transfer pending → active
+	// Transfer pending HDR texture → active scene texture
 	scene.env_texture.id = mgr.pending_hdr_tex
 	scene.env_texture.width = mgr.async_result.width
 	scene.env_texture.height = mgr.async_result.height
-	scene.ibl.prefilter_map = mgr.pending_spec_tex
-	scene.ibl.irradiance_map = mgr.pending_irr_tex
 
-	// Clear pending handles (ownership transferred)
+	// Clear pending handles (ownership transferred/pooled)
 	mgr.pending_hdr_tex = 0
 	mgr.pending_spec_tex = 0
 	mgr.pending_irr_tex = 0
@@ -1044,9 +1167,7 @@ env_manager_swap_textures :: proc(mgr: ^Env_Manager, scene: ^Scene) {
 	// Update skybox to use new env texture
 	rendering.skybox_update_env(&scene.skybox, scene.env_texture.id, scene.ibl.prefilter_map)
 
-	log.log_info("suckless-odin.env", "Environment textures swapped simultaneously")
+	log.log_info("suckless-odin.env", "Environment textures swapped simultaneously (pool slot %d active)", mgr.pool_active_idx)
 	elapsed_ms := time.duration_milliseconds(time.tick_since(mgr.load_start_tick))
 	log.log_info("suckless-odin.ibl", "IBL environment ready in %.2f ms, descriptor set updated.", elapsed_ms)
 }
-
-

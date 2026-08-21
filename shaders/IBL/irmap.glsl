@@ -1,6 +1,6 @@
 #version 450 core
 
-layout(local_size_x = 32, local_size_y = 32, local_size_z = 1) in;
+layout(local_size_x = 16, local_size_y = 4, local_size_z = 1) in;
 
 layout(binding = 0) uniform sampler2D envMap;
 layout(binding = 1, rgba16f) restrict writeonly uniform image2D irradianceMap;

@@ -832,7 +832,7 @@ draw_shader_cache_section :: proc(state: Scene_State) {
 	imgui.Spacing()
 
 	// --- Actions ---
-	can_compile := cached_program == 0 && p.shader_cache.count < i32(postfx.MAX_CACHED_VARIANTS)
+	can_compile := cached_program == 0
 	if !can_compile { imgui.BeginDisabled() }
 	if imgui.Button("Compile Current") {
 		postfx.pipeline_compile_variant(p)
@@ -843,7 +843,7 @@ draw_shader_cache_section :: proc(state: Scene_State) {
 		imgui.TextDisabled("(already cached)")
 	} else if p.shader_cache.count >= i32(postfx.MAX_CACHED_VARIANTS) {
 		imgui.SameLine()
-		imgui.TextDisabled("(cache full)")
+		imgui.TextDisabled("(LRU eviction)")
 	}
 
 	imgui.SameLine()

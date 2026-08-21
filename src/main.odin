@@ -25,7 +25,7 @@ main :: proc() {
 	}
 	defer app.destroy(application)
 
-	if !app.init(application, vsync = opts.vsync, compute_profile = opts.compute_profile) {
+	if !app.init(application, vsync = opts.vsync, compute_profile = opts.compute_profile, capture_ibl = opts.capture_ibl) {
 		log.log_error("suckless-odin.main", "Failed to initialize application")
 		os.exit(1)
 	}

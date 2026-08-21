@@ -28,15 +28,18 @@ run_benchmark :: proc(application: ^App, total_frames, warmup_frames: i32) {
 	// Disable GUI for clean measurement
 	application.imgui.visible = false
 
+	effective_warmup := min(warmup_frames, max(0, total_frames / 4))
+	measured_frames := max(1, total_frames - effective_warmup)
+
 	fmt.println("=== BENCHMARK START ===")
 	fmt.printfln("  GPU: %s", gl.GetString(gl.RENDERER))
-	fmt.printfln("  Frames: %d (warmup: %d, measured: %d)", total_frames, warmup_frames, total_frames - warmup_frames)
+	fmt.printfln("  Frames: %d (warmup: %d, measured: %d)", total_frames, effective_warmup, measured_frames)
 	fmt.printfln("  Effects: Vignette+Grain+Exposure+ChromAbbr+Bloom+ColorGrading+DoF+AutoExposure+FXAA+Tonemap+Banding")
 
 	w, h := glfw.GetFramebufferSize(application.window)
 	fmt.printfln("  Resolution: %dx%d", w, h)
 
-	measure_start: f64
+	measure_start := glfw.GetTime()
 	frame: i32
 
 	for frame < total_frames && application.running && !glfw.WindowShouldClose(application.window) {
@@ -55,7 +58,7 @@ run_benchmark :: proc(application: ^App, total_frames, warmup_frames: i32) {
 		gl.Finish()
 
 		// Dump frame after warmup for visual validation (BEFORE swap)
-		if frame == warmup_frames {
+		if frame == effective_warmup {
 			dump_benchmark_frame(application, bw, bh)
 		}
 
@@ -63,7 +66,7 @@ run_benchmark :: proc(application: ^App, total_frames, warmup_frames: i32) {
 
 		frame += 1
 
-		if frame == warmup_frames {
+		if frame == effective_warmup {
 			// Force a pipeline flush before measurement begins
 			gl.Finish()
 			measure_start = glfw.GetTime()
@@ -74,8 +77,7 @@ run_benchmark :: proc(application: ^App, total_frames, warmup_frames: i32) {
 	gl.Finish()
 	measure_end := glfw.GetTime()
 
-	measured_frames := total_frames - warmup_frames
-	elapsed := measure_end - measure_start
+	elapsed := max(0.0001, measure_end - measure_start)
 	avg_ms := (elapsed / f64(measured_frames)) * 1000.0
 	avg_fps := f64(measured_frames) / elapsed
 

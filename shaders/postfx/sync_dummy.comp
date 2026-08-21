@@ -1,0 +1,11 @@
+#version 450 core
+
+// Dummy compute shader (1x1 workgroup).
+// Used to trigger an explicit hardware compute context switch & VRAM cache flush.
+
+layout(local_size_x = 1, local_size_y = 1) in;
+
+void main()
+{
+	// No-op execution
+}

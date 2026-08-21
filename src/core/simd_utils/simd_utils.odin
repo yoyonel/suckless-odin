@@ -4,7 +4,11 @@ package simd_utils
 // Uses AVX2/F16C intrinsics (compiled with -mavx2 -mf16c).
 // Linked via deps/libtracy.a (shared native deps archive).
 
-foreign import lib "../../../deps/libsimd.a"
+when ODIN_OS == .Windows {
+	foreign import lib "../../../deps/libsimd_windows_x64.lib"
+} else {
+	foreign import lib "../../../deps/libsimd.a"
+}
 
 @(default_calling_convention = "c")
 foreign lib {

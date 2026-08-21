@@ -6,14 +6,16 @@ Ce document décrit l'utilisation des outils de profiling mémoire, CPU et threa
 
 ## 1. Vue d'Ensemble des Outils
 
-| Outil | Type d'Analyse | Métriques Clés | Commandes Task | GUI Associé |
-|---|---|---|---|---|
-| **Heaptrack** | Mémoire Heap & Allocations | Pic mémoire, nombre d'appels d'allocations, allocations par frame | `task profile-heaptrack` | `task profile-heaptrack-gui` |
-| **Intel VTune** (Memory) | Accès Mémoire & Caches | **L1/L2/L3 Cache Misses**, LLC Misses, bande passante DRAM, latence d'accès | `task profile-vtune-memory` | `task profile-vtune-gui` |
-| **Intel VTune** (Hotspots) | CPU Pur & Assembler | Top 15 des fonctions Odin les plus consommatrices, temps CPU | `task profile-vtune-hotspots` | `task profile-vtune-gui` |
-| **Intel VTune** (Threading) | Concurrence & Verrous | Contentions de sync, temps d'attente (Wait Time), inactivité CPU | `task profile-vtune-threading` | `task profile-vtune-gui` |
-| **Valgrind Callgrind** | Instruction-Level Call Graph | Compteurs d'instructions CPU exacts, graphe d'appel hiérarchique | `task profile-callgrind` | `task profile-callgrind-gui` (`kcachegrind`) |
-| **Tracy Profiler** | Profiling Frame-Level Temps Réel | CPU/GPU zones, frame time, locks, IBL progressive compute | `task profile` / `task build-profile` | `tracy` |
+| Outil | Type d'Analyse | Métriques Clés | Commandes Linux | Commandes Windows (Wine) | GUI Associé |
+|---|---|---|---|---|---|
+| **Tracy Profiler** | Timeline Passes & GPU | Zones CPU/GPU, frame time, IBL progressive compute | `task profile-tracy` | `task profile-win-tracy` | `task profile-tracy-gui` |
+| **GPU Render Benchmark** | Débit & Frametime | FPS moyen, frametime déterministe (11 passes) | `task bench-render` | `task bench-win-render` | CLI / stdout |
+| **Heaptrack** | Mémoire Heap & Allocations | Pic mémoire, nombre d'allocations par frame | `task profile-heaptrack` | N/A (Heap NT interne) | `task profile-heaptrack-gui` |
+| **Intel VTune** (Hotspots) | CPU Pur & Hotspots | Top 15 fonctions Odin consommées, temps CPU | `task profile-vtune-hotspots` | N/A (Conflit Pin/Wine) | `task profile-vtune-gui` |
+| **Intel VTune** (Memory) | Accès Mémoire & Caches | **L1/L2/L3 Misses**, LLC Misses, DRAM BW | `task profile-vtune-memory` | N/A (PMU Hardware) | `task profile-vtune-gui` |
+| **Intel VTune** (Threading) | Concurrence & Verrous | Contentions de sync, temps d'attente | `task profile-vtune-threading` | N/A (PMU Hardware) | `task profile-vtune-gui` |
+| **Valgrind Callgrind** | Call Graph & Instructions | Compteurs d'instructions CPU exacts | `task profile-callgrind` | N/A (Binaire ELF) | `task profile-callgrind-gui` |
+| **Suite Complète** | Exécution tout-en-un | Profilage automatisé de bout en bout | `task profile-all` | `task profile-win-all` | Tous les GUIs |
 
 ---
 

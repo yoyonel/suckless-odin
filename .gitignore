@@ -1,9 +1,14 @@
 # Build output
 build/
+build-release/
 suckless-odin
+*.exe
 
 # Odin build artifacts
 *.o
+*.obj
+*.lib
+deps/glfw_build_win/
 
 # IDE
 .vscode/settings.json

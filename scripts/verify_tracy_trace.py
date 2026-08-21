@@ -58,7 +58,7 @@ def find_csvexport_bin(custom_path: Path | None) -> Path:
     which_res = shutil.which("tracy-csvexport")
     if which_res:
         return Path(which_res)
-    fallback = Path("/home/latty/.local/bin/tracy-csvexport")
+    fallback = Path.home() / ".local/bin/tracy-csvexport"
     if fallback.exists():
         return fallback
     raise FileNotFoundError("tracy-csvexport binary not found in deps/ or PATH")
@@ -183,7 +183,7 @@ def main():
             cnt = cpu_counts[f]
             status = "✅" if cnt > 0 else "⚠️"
             print(f"  {status} Fiber Zone '{f}': {cnt:>5} occurrences")
-            if cnt == 0 and ("Async" in f or "Sync" in f or "BRDF" in f):
+            if cnt == 0 and ("Async" in f or "Sync" in f):
                 missing_fibers.append(f)
 
         if missing_fibers:

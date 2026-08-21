@@ -10,7 +10,7 @@ import shader "../shader"
 // Shader variant cache — compile optimized uber-shader variants
 // with #define flags that eliminate dead branches at compile time.
 
-MAX_CACHED_VARIANTS :: 8
+MAX_CACHED_VARIANTS :: 64
 
 Shader_Variant :: struct {
 	program: u32,
@@ -24,25 +24,29 @@ Shader_Cache :: struct {
 }
 
 // Try to find a cached variant for the given effect flags.
-// Returns program ID or 0 if not cached.
+// Returns program ID or 0 if not cached. Promotes to index 0 on hit (LRU).
 shader_cache_find :: proc(cache: ^Shader_Cache, effects: Effect_Flags) -> u32 {
 	if !cache.enabled { return 0 }
 	for i in 0 ..< cache.count {
 		if cache.variants[i].effects == effects {
-			return cache.variants[i].program
+			// Found it! Promote to index 0 (LRU MRU policy)
+			if i > 0 {
+				entry := cache.variants[i]
+				for j := i; j > 0; j -= 1 {
+					cache.variants[j] = cache.variants[j - 1]
+				}
+				cache.variants[0] = entry
+			}
+			return cache.variants[0].program
 		}
 	}
 	return 0
 }
 
 // Compile and cache a shader variant for the given effect flags.
-// Returns the compiled program, or 0 on failure.
+// Returns the compiled program, or 0 on failure. Evicts LRU when full.
 shader_cache_compile :: proc(cache: ^Shader_Cache, effects: Effect_Flags) -> u32 {
 	if !cache.enabled { return 0 }
-	if cache.count >= MAX_CACHED_VARIANTS {
-		log.log_warning("suckless-odin.postfx.shader_cache", "Cache full (%d variants)", MAX_CACHED_VARIANTS)
-		return 0
-	}
 
 	// Build #define preamble
 	preamble := build_defines_preamble(effects)
@@ -65,11 +69,29 @@ shader_cache_compile :: proc(cache: ^Shader_Cache, effects: Effect_Flags) -> u32
 	set_split_colors_uniform(program)
 	gl.UseProgram(0)
 
-	// Store in cache
-	cache.variants[cache.count] = {program = program, effects = effects}
-	cache.count += 1
+	// Move existing entries down to make room at index 0 (LRU eviction)
+	move_count := cache.count
+	if move_count >= MAX_CACHED_VARIANTS {
+		// Cache full: evict LRU (last entry)
+		if cache.variants[MAX_CACHED_VARIANTS - 1].program != 0 {
+			gl.DeleteProgram(cache.variants[MAX_CACHED_VARIANTS - 1].program)
+			cache.variants[MAX_CACHED_VARIANTS - 1].program = 0
+		}
+		move_count = MAX_CACHED_VARIANTS - 1
+	} else {
+		cache.count += 1
+	}
 
-	log.log_info("suckless-odin.postfx.shader_cache", "Compiled variant #%d (effects: 0x%08X)", cache.count, transmute(u32)effects)
+	if move_count > 0 {
+		for j := move_count; j > 0; j -= 1 {
+			cache.variants[j] = cache.variants[j - 1]
+		}
+	}
+
+	// Store new variant at index 0 (MRU)
+	cache.variants[0] = {program = program, effects = effects}
+
+	log.log_info("suckless-odin.postfx.shader_cache", "Compiled variant (cache size: %d/%d, effects: 0x%08X)", cache.count, MAX_CACHED_VARIANTS, transmute(u32)effects)
 	return program
 }
 

@@ -15,9 +15,9 @@ Profil capturé sur session interactive normalisée (714 frames, 2 cycles HDR, m
 * **Total memory leaked** : 58.40 KB (résiduel drivers X11 / Mesa init)
 * **Top Hotspots d'allocations identifiés** :
   1. `libgallium / llvmpipe` : **194,027 appels (21.47 MB peak)** (churn interne du driver Mesa)
-  2. `postfx::bloom_render` : **2,856 appels (glFramebufferTexture2D)** ([`bloom.odin:146`](file:///home/latty/Prog/__PERSO__/suckless-odin/src/rendering/postfx/bloom.odin#L146))
-  3. `postfx::dof_render` : **~1,428 appels (glFramebufferTexture2D)** ([`dof.odin:62, 74`](file:///home/latty/Prog/__PERSO__/suckless-odin/src/rendering/postfx/dof.odin#L62))
-  4. `scene::async_worker_proc` : **67.11 MB peak (FP16 buffer) + 24.75 MB peak (raw HDR)** ([`async_loader.odin:242, 251`](file:///home/latty/Prog/__PERSO__/suckless-odin/src/scene/async_loader.odin#L242))
+  2. `postfx::bloom_render` : **2,856 appels (glFramebufferTexture2D)** ([`bloom.odin:146`](../src/rendering/postfx/bloom.odin#L146))
+  3. `postfx::dof_render` : **~1,428 appels (glFramebufferTexture2D)** ([`dof.odin:62, 74`](../src/rendering/postfx/dof.odin#L62))
+  4. `scene::async_worker_proc` : **67.11 MB peak (FP16 buffer) + 24.75 MB peak (raw HDR)** ([`async_loader.odin:242, 251`](../src/scene/async_loader.odin#L242))
 
 ---
 
@@ -28,8 +28,8 @@ Profil capturé sur session interactive normalisée (714 frames, 2 cycles HDR, m
 ### 🎯 Plan A : FBOs Pré-attachés pour Bloom & Post-Processing
 
 * **Fichiers cibles** : 
-  * [`src/rendering/postfx/bloom.odin`](file:///home/latty/Prog/__PERSO__/suckless-odin/src/rendering/postfx/bloom.odin)
-  * [`src/rendering/postfx/dof.odin`](file:///home/latty/Prog/__PERSO__/suckless-odin/src/rendering/postfx/dof.odin)
+  * [`src/rendering/postfx/bloom.odin`](../src/rendering/postfx/bloom.odin)
+  * [`src/rendering/postfx/dof.odin`](../src/rendering/postfx/dof.odin)
 * **Composant** : Pipeline de post-traitement HDR (Bloom mip chain & Depth of Field blur).
 
 #### 1. Description Technique & Modifications
@@ -71,7 +71,7 @@ task bench-render          # Mesure du framerate et fluidité
 
 ### 🎯 Plan B : Optimisation Mémoire du Chargeur HDR Asynchrone
 
-* **Fichier cible** : [`src/scene/async_loader.odin`](file:///home/latty/Prog/__PERSO__/suckless-odin/src/scene/async_loader.odin)
+* **Fichier cible** : [`src/scene/async_loader.odin`](../src/scene/async_loader.odin)
 * **Composant** : I/O asynchrone et décodage Radiance HDR en tâche de fond.
 
 #### 1. Description Technique & Modifications

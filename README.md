@@ -2,6 +2,7 @@
 
 [![CI/CD Pipeline](https://github.com/yoyonel/suckless-odin/actions/workflows/ci.yml/badge.svg)](https://github.com/yoyonel/suckless-odin/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Platform: Linux | Windows](https://img.shields.io/badge/Platform-Linux%20%7C%20Windows-blue.svg)](#-cross-platform--windows-support)
 [![Odin Version](https://img.shields.io/badge/Odin-dev--2026--05+-blue.svg)](https://odin-lang.org/)
 [![OpenGL](https://img.shields.io/badge/OpenGL-4.5%20%2F%204.6%20Core-green.svg)](https://www.khronos.org/opengl/)
 [![Tracy Profiler](https://img.shields.io/badge/Profiler-Tracy%20v0.11-orange.svg)](https://github.com/wolfpld/tracy)
@@ -10,7 +11,7 @@
 
 High-performance, physically-based OpenGL rendering engine — ISO port from [suckless-ogl](https://github.com/yoyonel/suckless-ogl) (C11) to [Odin](https://odin-lang.org/).
 
-Combines Cook-Torrance PBR, Image-Based Lighting (IBL), a 15-effect uber-shader post-processing pipeline, hardware-accelerated AVX2 SIMD decoding, TLA+ formal async state machines, Dear ImGui overlay, and comprehensive profiling suites (Tracy, Intel VTune, Heaptrack, Valgrind).
+Combines Cook-Torrance PBR, Image-Based Lighting (IBL), a 15-effect uber-shader post-processing pipeline, hardware-accelerated AVX2 SIMD decoding, TLA+ formal async state machines, Dear ImGui overlay, cross-platform Windows/Linux deployment, and comprehensive profiling suites (Tracy, Intel VTune, Heaptrack, Valgrind).
 
 ---
 
@@ -33,6 +34,15 @@ Combines Cook-Torrance PBR, Image-Based Lighting (IBL), a 15-effect uber-shader 
   - **Tonemapping Operators** — ACES Filmic, Extended Reinhard, Uncharted 2, AgX, Neutral, and Linear clamp.
   - **Color Grading & 3D LUT** — Trilinear tetrahedral sampling of `.cube` 3D look-up tables with dynamic blend weight.
   - **Artistic FX** — Film Grain (simplex temporal noise), Chromatic Aberration (spectral fringe offset), Vignette, Banding suppression (dithering), Fog depth integration, and Vector Field / Stencil debug visualization modes.
+
+### 🪟 Cross-Platform & Windows / Steam Ecosystem
+- **Native Windows AMD64 Port** — Full support for Windows PE binaries (`suckless-odin.exe`) with static runtime linkage (`-static -lpthread -lstdc++`).
+- **Automated Cross-Compilation Pipeline** — Cross-compile directly from Linux via Odin (`-target:windows_amd64 -build-mode:obj`) and link with MinGW/Clang/LLD without MSVC dependencies.
+- **Wine / Proton Testing & Execution** — Direct execution (`task run-win`), Steam Proton runner (`task run-proton`), and 104 automated tests under Wine (`task test-win`).
+- **Standalone Distribution Packaging** — One-command bundling (`task package-win`, `task package-linux`, `task package`) generating self-contained `.tar.zst` and `.zip` archives.
+- **Steam Grid Artworks & Auto-Injector** — ImageMagick asset generation (`task steam-gen-assets`) and automatic injection into Steam client shortcuts (`task steam-art`).
+- **Isolated Sandbox Verification** — Scripted extraction and benchmark validation in `/tmp` sandbox (`task run-package-win`).
+
 
 ### ⚡ Performance & Hardware Acceleration
 - **SIMD AVX2 Direct Radiance HDR Decoder** — Custom vectorized decoder with non-temporal streaming stores (`_mm_stream_si128`), RLE stack decompression residing in 32 KB L1 cache, and 8-thread lock-free scanline parallelism (**21.6x faster than stb_image**).
@@ -151,16 +161,28 @@ task br-release
 task --list
 ```
 
-### Build Targets
+### Build Targets (Linux & Windows)
 
-| Task Command | Compiler Flags | Optimization Profile | Use Case |
-| :--- | :--- | :--- | :--- |
-| `task build` | `-debug` | Safety checks active | Development & debugging |
-| `task build-fast-release` | `-o:speed` | Optimized | Fast local testing |
-| `task build-release` | `-o:speed` | Full optimization | Production deployment |
-| `task build-ultra` | `-o:aggressive -microarch:native` | Maximum throughput | Dedicated benchmarking |
-| `task build-profile` | `-o:speed -define:TRACY_ENABLE=true` | Tracy active | Frame profiling |
-| `task build-sanitize` | `-debug -sanitize:address` | ASan / LSan enabled | Memory safety & leak audits |
+| Task Command | Platform | Compiler Flags | Description |
+| :--- | :---: | :--- | :--- |
+| `task build` | Linux | `-debug` | Development & debugging build |
+| `task build-release` | Linux | `-o:speed` | Optimized production deployment |
+| `task build-ultra` | Linux | `-o:aggressive -microarch:native` | Maximum throughput benchmarking |
+| `task build-profile` | Linux | `-o:speed -define:TRACY_ENABLE=true` | Tracy active frame profiling |
+| `task build-sanitize` | Linux | `-debug -sanitize:address` | ASan / LSan memory safety audit |
+| `task build-win` | Windows x64 | `-target:windows_amd64 -debug` | Windows debug cross-compilation |
+| `task build-win-release` | Windows x64 | `-target:windows_amd64 -o:speed` | Windows optimized release build |
+| `task build-win-ultra` | Windows x64 | `-target:windows_amd64 -o:aggressive` | Windows ultra-optimized build |
+| `task run-win` | Windows / Wine | — | Run Windows debug executable under Wine |
+| `task run-win-release` | Windows / Wine | — | Run Windows release executable under Wine |
+| `task package-linux` | Linux Release | — | Create standalone `.tar.zst` and `.zip` Linux packages |
+| `task package-win` | Windows Release | — | Create standalone `.tar.zst` and `.zip` Windows packages |
+| `task package` | All Releases | — | Create both Linux and Windows release archives |
+| `task run-package-win` | Windows Sandbox | — | Extract package in isolated `/tmp` and test under Wine |
+| `task run-proton` | Steam Proton | — | Run Windows release in isolated sandbox under Steam Proton |
+| `task steam-gen-assets`| Steam Grid | — | Generate 5 Steam artwork formats via ImageMagick |
+| `task steam-art` | Steam Client | — | Auto-inject artwork and icon into Steam shortcuts |
+
 
 ---
 
@@ -187,16 +209,22 @@ task --list
 ## Testing & Quality Assurance
 
 ```bash
-# Complete automated test suite (183 tests)
+# Complete automated Linux test suite (183 tests)
 task test
 
-# Granular test targets
+# Granular Linux test targets
 task test-unit              # Unit tests only (79 tests)
 task test-cli               # CLI interface parser tests (13 tests)
 task test-shader            # Shader parser & #include preprocessor tests (12 tests)
 task test-gl-xvfb           # Headless GL tests & visual regression under Xvfb (79 tests)
 task test-chaos-xvfb        # Temporal chaos fuzzer under Xvfb
 task test-integration       # E2E standardized integration test on display
+
+# Automated Wine / Windows Test Suites (104 tests)
+task test-win               # Run all unit, cli, and shader tests under Wine
+task test-win-unit          # Run unit tests under Wine (79 tests)
+task test-win-cli           # Run CLI tests under Wine (13 tests)
+task test-win-shader        # Run shader preprocessor tests under Wine (12 tests)
 
 # Stress testing & reliability suite
 task stress                 # Unified stress test on physical display (30s, ~11 actions/s)
@@ -238,7 +266,10 @@ task build-profile              # Build with Tracy instrumentation
 task profile                    # Automated Tracy trace capture
 ```
 
-For complete methodology, see the [Advanced Profiling Guide](docs/profiling_advanced.md).
+For complete methodology and cross-platform compatibility:
+- [Advanced Profiling Guide](docs/profiling_advanced.md)
+- [Windows / Wine Profiling Tooling Matrix](docs/windows-profiling-tooling-matrix-2026-08-18.md)
+- [Intel VTune Profiling Report on Windows Release under Wine](docs/windows-vtune-profiling-analysis-2026-08-18.md)
 
 ---
 

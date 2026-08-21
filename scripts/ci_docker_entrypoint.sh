@@ -79,6 +79,16 @@ do_test_gl() {
     xvfb-run -a -s "-screen 0 1024x768x24" /tmp/odin-test-gl
 }
 
+do_test_win() {
+    section "Windows Cross-Compilation & Wine Tests"
+    task test-win
+}
+
+do_package_win() {
+    section "Windows Packaging & Verification"
+    task package-win
+}
+
 # --- Main ---
 diag
 ensure_imgui
@@ -90,6 +100,8 @@ case "$MODE" in
     test-cli)    do_test_cli ;;
     test-shader) do_test_shader ;;
     test-gl)     do_test_gl ;;
+    test-win)    do_test_win ;;
+    package-win) do_package_win ;;
     all)
         do_lint
         do_build
@@ -97,11 +109,12 @@ case "$MODE" in
         do_test_cli
         do_test_shader
         do_test_gl
+        do_test_win
         section "ALL PASSED ✓"
         ;;
     *)
         echo "Unknown mode: $MODE"
-        echo "Usage: $0 [lint|build|test-unit|test-cli|test-shader|test-gl|all]"
+        echo "Usage: $0 [lint|build|test-unit|test-cli|test-shader|test-gl|test-win|package-win|all]"
         exit 1
         ;;
 esac

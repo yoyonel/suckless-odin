@@ -8,16 +8,25 @@ TMP_DIR="${TMP_DIR:-/tmp}"
 OUTPUT_DIR="build/profiling/tracy"
 mkdir -p "$OUTPUT_DIR"
 
-TRACE_FILE="$OUTPUT_DIR/session.tracy"
+TARGET_MODE="${1:-linux}"
+if [ "$TARGET_MODE" = "--win" ] || [ "$TARGET_MODE" = "win" ]; then
+	APP_CMD=(wine ./build/profile-win/suckless-odin.exe)
+	TRACE_FILE="$OUTPUT_DIR/session_win.tracy"
+	TARGET_NAME="Windows x64 (Wine / Proton)"
+else
+	APP_CMD=(./build/profile/suckless-odin)
+	TRACE_FILE="$OUTPUT_DIR/session.tracy"
+	TARGET_NAME="Linux Native x86_64"
+fi
 rm -f "$TRACE_FILE"
 
 echo "=========================================================================="
-echo "🎯 BENCHMARK & CAPTURE TRACY PROFILER"
+echo "🎯 BENCHMARK & CAPTURE TRACY PROFILER — $TARGET_NAME"
 echo "=========================================================================="
 
 TRACY_CAPTURE_BIN="deps/tracy/capture/build/tracy-capture"
 if [ ! -x "$TRACY_CAPTURE_BIN" ]; then
-	TRACY_CAPTURE_BIN=$(which tracy-capture || echo "/home/latty/.local/bin/tracy-capture")
+	TRACY_CAPTURE_BIN=$(which tracy-capture || echo "$HOME/.local/bin/tracy-capture")
 fi
 if [ ! -x "$TRACY_CAPTURE_BIN" ]; then
 	echo "❌ Erreur: tracy-capture introuvable. Lancez 'task build-tracy-tools'."
@@ -43,9 +52,9 @@ for _ in {1..40}; do
 done
 
 
-# 2. Lancer la session interactive sous build-profile
-echo "[Tracy] Lancement de l'application instrumentée..."
-TMP_DIR="$TMP_DIR" ./scripts/interactive_runner.sh ./build/profile/suckless-odin
+# 2. Lancer la session interactive instrumentée
+echo "[Tracy] Lancement de l'application instrumentée ($TARGET_NAME)..."
+TMP_DIR="$TMP_DIR" ./scripts/interactive_runner.sh "${APP_CMD[@]}"
 
 # 3. Attendre la fin de la capture
 echo "[Tracy] Finalisation du fichier trace..."

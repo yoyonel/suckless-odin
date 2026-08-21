@@ -115,6 +115,13 @@ auto_exposure_get_texture :: proc(fx: ^Auto_Exposure_FX) -> u32 {
 
 @(private)
 auto_exposure_readback :: proc(fx: ^Auto_Exposure_FX) {
+	// Readback is purely telemetry for Dear ImGui debug sliders.
+	// Throttle to 10 Hz (every 10 frames) to eliminate per-frame FenceSync/MapBuffer stalls.
+	if fx.readback_frame % 10 != 0 {
+		fx.readback_frame += 1
+		return
+	}
+
 	write_idx := fx.readback_frame % 2
 	read_idx := (fx.readback_frame + 1) % 2
 

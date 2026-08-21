@@ -20,7 +20,7 @@ $$\text{Idle} \longrightarrow \text{Loading} \longrightarrow \text{Wait\_IBL} \l
 
 ## 2. Étape 1 : Mise à jour de la Spécification Formelle TLA+
 
-Le fichier [EnvManagerVerification.tla](file:///home/latty/Prog/__PERSO__/suckless-odin/verification/EnvManagerVerification.tla) est notre unique source de vérité. Nous allons y déclarer ce nouvel état et ses flèches de transition autorisées.
+Le fichier [EnvManagerVerification.tla](EnvManagerVerification.tla) est notre unique source de vérité. Nous allons y déclarer ce nouvel état et ses flèches de transition autorisées.
 
 ### A. Déclarer le nouvel état
 
@@ -99,7 +99,7 @@ Une fois le modèle mathématique modifié, le développeur n'a pas besoin d'éc
 task codegen-states
 ```
 
-Le script de génération automatique va lire le fichier `.tla`, analyser nos modifications et réécrire le fichier [env_manager_states.gen.odin](file:///home/latty/Prog/__PERSO__/suckless-odin/src/scene/env_manager_states.gen.odin) :
+Le script de génération automatique va lire le fichier `.tla`, analyser nos modifications et réécrire le fichier [env_manager_states.gen.odin](../src/scene/env_manager_states.gen.odin) :
 
 1. L'énumération `Transition_State` inclura désormais automatiquement l'élément `Audio_Fade`.
 2. La matrice statique booléenne `IS_TRANSITION_VALID` sera recalculée avec les valeurs `true` uniquement sur les flèches que nous avons définies (ex: de `.Audio_Fade` vers `.Fade_In`). Tout autre chemin sera configuré à `false`.
@@ -108,7 +108,7 @@ Le script de génération automatique va lire le fichier `.tla`, analyser nos mo
 
 ## 4. Étape 3 : Écrire le code métier (Odin)
 
-Le développeur peut maintenant implémenter la logique physique du fondu audio dans le fichier principal [env_manager.odin](file:///home/latty/Prog/__PERSO__/suckless-odin/src/scene/env_manager.odin).
+Le développeur peut maintenant implémenter la logique physique du fondu audio dans le fichier principal [env_manager.odin](../src/scene/env_manager.odin).
 
 ### A. Traiter l'état dans la boucle de mise à jour
 

@@ -75,8 +75,8 @@ Every profile run generates two persistent files that are saved in the host mach
 
 ### 3.3 Startup Telemetry & Warm-up Metrics (`/tmp/startup_telemetry.csv`)
 *   **What it is**: Lightweight CSV trace capturing the engine's initialization cost and the detailed breakdown of its first 5 frames.
-*   **Producer**: Written automatically by [`src/app/telemetry.odin`](file:///home/latty/Prog/__PERSO__/suckless-odin/src/app/telemetry.odin) via [`src/app/app.odin`](file:///home/latty/Prog/__PERSO__/suckless-odin/src/app/app.odin) as soon as `frame_index == 5`.
-*   **Consumer**: Parsed and reported by [`scripts/analyze_profile.py`](file:///home/latty/Prog/__PERSO__/suckless-odin/scripts/analyze_profile.py) during `task profile` and `task profile-headless`.
+*   **Producer**: Written automatically by [`src/app/telemetry.odin`](../src/app/telemetry.odin) via [`src/app/app.odin`](../src/app/app.odin) as soon as `frame_index == 5`.
+*   **Consumer**: Parsed and reported by [`scripts/analyze_profile.py`](../scripts/analyze_profile.py) during `task profile` and `task profile-headless`.
 *   **Why it exists**: Isolates cold-start costs (shader compilation, pipeline setup, initial IBL bakes) from steady-state rendering, ensuring startup regressions are detected immediately.
 *   **Structure & Manual Interpretation (Human Guide)**:
     ```csv

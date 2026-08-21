@@ -73,5 +73,5 @@ foreign simd {
 
 ## 4. Maintenance & Evolution
 
-* **Unit Testing**: Validated via `task test-simd` ([`tests/test_simd.odin`](file:///home/latty/Prog/__PERSO__/suckless-odin/tests/test_simd.odin)), comparing scalar vs. SIMD multi-threaded output bit-for-bit.
+* **Unit Testing**: Validated via `task test-simd` ([`tests/test_simd.odin`](../tests/test_simd.odin)), comparing scalar vs. SIMD multi-threaded output bit-for-bit.
 * **Profiling**: Monitored continuously with `task profile-callgrind` and `task profile-tracy`.

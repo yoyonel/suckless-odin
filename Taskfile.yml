@@ -183,21 +183,25 @@ tasks:
 
   run:
     desc: Run the debug executable
+    deps: [build]
     cmds:
       - "{{.RUNNER}}./{{.BUILD_BASE}}/debug/suckless-odin"
 
   run-release:
     desc: Run the optimized release executable
+    deps: [build-release]
     cmds:
       - "{{.RUNNER}}./{{.BUILD_BASE}}/release/suckless-odin"
 
   run-ultra:
     desc: Run the ultra-release executable
+    deps: [build-ultra]
     cmds:
       - "{{.RUNNER}}./{{.BUILD_BASE}}/ultra/suckless-odin"
 
   run-profile:
     desc: Run the profile executable (Tracy active)
+    deps: [build-profile]
     cmds:
       - "{{.RUNNER}}./{{.BUILD_BASE}}/profile/suckless-odin"
 
@@ -258,17 +262,17 @@ tasks:
   test-unit:
     desc: Run unit tests
     cmds:
-      - "{{.ODIN}} test tests/ -out:/tmp/odin-test-unit -define:ODIN_TEST_THREADS={{.TEST_THREADS}}"
+      - "{{.ODIN}} test tests/ -out:/tmp/odin-test-unit -thread-count:{{.NPROCS}} -define:ODIN_TEST_THREADS=1"
 
   test-cli:
     desc: Run CLI tests in main package
     cmds:
-      - "{{.ODIN}} test src/ -out:/tmp/odin-test-cli -define:ODIN_TEST_THREADS={{.TEST_THREADS}}"
+      - "{{.ODIN}} test src/ -out:/tmp/odin-test-cli -thread-count:{{.NPROCS}} -define:ODIN_TEST_THREADS=1"
 
   test-shader:
     desc: Run shader compilation CPU tests
     cmds:
-      - "{{.ODIN}} test src/rendering/shader/ -out:/tmp/odin-test-shader -define:ODIN_TEST_THREADS={{.TEST_THREADS}}"
+      - "{{.ODIN}} test src/rendering/shader/ -out:/tmp/odin-test-shader -thread-count:{{.NPROCS}} -define:ODIN_TEST_THREADS=1"
 
   test-gl:
     desc: Run OpenGL headless GPU tests on local display
@@ -372,9 +376,15 @@ tasks:
   # ─── LINT & VET ────────────────────────────────────────────────────────────
 
   lint:
-    desc: Full syntax and style lint (strict mode)
+    desc: Full syntax, style, and documentation link integrity lint
     cmds:
       - "{{.ODIN}} check src/ -vet -strict-style -warnings-as-errors"
+      - python3 scripts/verify_docs_links.py
+
+  test-docs-links:
+    desc: Verify all documentation links and internal markdown anchors
+    cmds:
+      - python3 scripts/verify_docs_links.py
 
   vet:
     desc: Semantic and type checking (vet checks)
@@ -460,9 +470,9 @@ tasks:
   # ─── CI DOCKER (CI) ────────────────────────────────────────────────────────
 
   ci-docker-build:
-    desc: Build the local CI Docker image
+    desc: Build the local CI Docker image with BuildKit caching
     cmds:
-      - docker build -f Dockerfile.ci -t {{.CI_IMAGE}} .
+      - DOCKER_BUILDKIT=1 docker build -f Dockerfile.ci -t {{.CI_IMAGE}} .
 
   ci-docker:
     desc: Run full CI pipeline inside local Docker image
@@ -564,7 +574,13 @@ tasks:
     desc: Run GPU render benchmark
     deps: [build-release]
     cmds:
-      - "{{.RUNNER}}env vblank_mode=0 __GL_SYNC_TO_VBLANK=0 ./{{.BUILD_BASE}}/release/suckless-odin --benchmark --benchmark-frames=200"
+      - "{{.RUNNER}}env mesa_glthread=true MESA_NO_ERROR=1 vblank_mode=0 __GL_SYNC_TO_VBLANK=0 ./{{.BUILD_BASE}}/release/suckless-odin --benchmark --benchmark-frames=200"
+
+  bench-win-render:
+    desc: Run GPU render benchmark for Windows executable under Wine
+    deps: [build-win-release]
+    cmds:
+      - "WINEDEBUG=-all env vblank_mode=0 __GL_SYNC_TO_VBLANK=0 wine {{.BUILD_BASE}}/release-win/suckless-odin.exe --benchmark --benchmark-frames=200"
 
   bench-render-debug:
     desc: Run GPU render benchmark in debug mode
@@ -611,6 +627,13 @@ tasks:
       - chmod +x scripts/benchmark_tracy.sh scripts/verify_tracy_trace.py
       - ./scripts/benchmark_tracy.sh
 
+  profile-win-tracy:
+    desc: Automated Tracy Profiler capture and trace verification for Windows x64 under Wine
+    deps: [build-win-profile]
+    cmds:
+      - chmod +x scripts/benchmark_tracy.sh scripts/verify_tracy_trace.py
+      - ./scripts/benchmark_tracy.sh --win
+
   profile-tracy-gui:
     desc: Open the latest Tracy trace in Tracy Profiler GUI
     deps: [build-tracy-server]
@@ -620,7 +643,7 @@ tasks:
     cmds:
       - |
         if [ -z "{{.TRACE_FILE}}" ] || [ ! -f "{{.TRACE_FILE}}" ]; then
-          echo "Erreur: Aucune trace Tracy trouvée. Lancez d'abord 'task profile-tracy'."
+          echo "Erreur: Aucune trace Tracy trouvée. Lancez d'abord 'task profile-tracy' ou 'task profile-win-tracy'."
           exit 1
         fi
         ./build/bin/tracy-profiler "{{.TRACE_FILE}}" &
@@ -691,6 +714,20 @@ tasks:
       - chmod +x scripts/benchmark_vtune_threading.sh
       - ./scripts/benchmark_vtune_threading.sh
 
+  profile-vtune-gpu-hotspots:
+    desc: Profile Intel Iris Xe GPU compute kernels, EU occupancy, and sampler access via VTune
+    deps: [build-relwithdebinfo]
+    cmds:
+      - chmod +x scripts/benchmark_vtune_gpu_hotspots.sh
+      - ./scripts/benchmark_vtune_gpu_hotspots.sh
+
+  profile-vtune-gpu-memory:
+    desc: Profile Intel Iris Xe GPU L3 cache bandwidth, SLM, and VRAM accesses via VTune
+    deps: [build-relwithdebinfo]
+    cmds:
+      - chmod +x scripts/benchmark_vtune_gpu_memory.sh
+      - ./scripts/benchmark_vtune_gpu_memory.sh
+
   profile-vtune-gui:
     desc: Open the suckless-odin VTune project in vtune-gui
     cmds:
@@ -708,7 +745,11 @@ tasks:
           exit 1
         fi
         PROJECT_DIR="$HOME/intel/vtune/projects/suckless-odin"
-        if [ -d "$PROJECT_DIR" ]; then
+        LATEST_RES=$(ls -td "$PROJECT_DIR"/r* 2>/dev/null | head -n1 || true)
+        if [ -n "$LATEST_RES" ] && [ -d "$LATEST_RES" ]; then
+          echo "Ouverture du dernier résultat VTune ($LATEST_RES)..."
+          "$VTUNE_GUI_BIN" "$LATEST_RES"
+        elif [ -d "$PROJECT_DIR" ]; then
           echo "Ouverture du projet VTune suckless-odin ($PROJECT_DIR)..."
           "$VTUNE_GUI_BIN" --project-path "$PROJECT_DIR"
         else
@@ -722,6 +763,34 @@ tasks:
       - task: profile-heaptrack
       - task: profile-vtune-hotspots
       - task: profile-vtune-memory
+
+  profile-win-all:
+    desc: Run complete Windows profiling and benchmarking suite (GPU render + Tracy capture)
+    cmds:
+      - task: bench-win-render
+      - task: profile-win-tracy
+
+  # ─── MESA DRIVER GPU DEBUG & TRACING ────────────────────────────────────────
+
+  debug-mesa:
+    desc: Launch app with Mesa driver debug flags (Intel CS & perf warnings to stdout)
+    deps: [build]
+    cmds:
+      - env INTEL_DEBUG=cs,perf MESA_DEBUG=1 ./{{.BUILD_BASE}}/debug/suckless-odin
+
+  debug-mesa-hud:
+    desc: Launch app with Mesa Gallium HUD real-time GPU/CPU overlays
+    deps: [build]
+    cmds:
+      - env GALLIUM_HUD="fps,cpu,memory-vram" ./{{.BUILD_BASE}}/debug/suckless-odin
+
+  debug-mesa-log:
+    desc: Trace Mesa driver pipeline barriers and compute dispatches to log file
+    deps: [build]
+    cmds:
+      - mkdir -p build/profiling
+      - env INTEL_DEBUG=cs,perf,bat MESA_DEBUG=1 MESA_LOG_FILE=build/profiling/mesa.log ./{{.BUILD_BASE}}/debug/suckless-odin
+      - echo "✓ Log Mesa généré dans build/profiling/mesa.log"
 
   # ─── RENDERDOC ──────────────────────────────────────────────────────────────
 
@@ -766,6 +835,63 @@ tasks:
           fi
         fi
         "$RENDERDOC_CMD" capture --working-dir . ./{{.BUILD_BASE}}/debug/suckless-odin
+
+  renderdoc-capture-ibl:
+    desc: Programmatic multi-frame capture of the complete async IBL generation sequence via RenderDoc
+    deps: [build]
+    cmds:
+      - chmod +x scripts/benchmark_renderdoc_ibl.sh
+      - ./scripts/benchmark_renderdoc_ibl.sh
+
+  renderdoc-replay:
+    desc: Open the latest IBL capture file in RenderDoc GUI (qrenderdoc)
+    vars:
+      RENDERDOC_DIR: '{{.RENDERDOC_DIR | default .ENV.RENDERDOC_DIR | default "/usr/bin"}}'
+    cmds:
+      - |
+        RENDERDOC_BIN="{{.RENDERDOC_DIR}}/qrenderdoc"
+        if [ ! -x "$RENDERDOC_BIN" ]; then
+          if command -v qrenderdoc >/dev/null 2>&1; then
+            RENDERDOC_BIN="$(command -v qrenderdoc)"
+          elif [ -x "$HOME/.local/renderdoc_1.42/bin/qrenderdoc" ]; then
+            RENDERDOC_BIN="$HOME/.local/renderdoc_1.42/bin/qrenderdoc"
+          else
+            echo "Erreur: qrenderdoc introuvable."
+            exit 127
+          fi
+        fi
+        LATEST_RDC=$(ls -td build/profiling/renderdoc/*.rdc 2>/dev/null | head -n1 || true)
+        if [ -z "$LATEST_RDC" ] || [ ! -f "$LATEST_RDC" ]; then
+          echo "Erreur: Aucune trace .rdc trouvée dans build/profiling/renderdoc/. Lancez d'abord 'task renderdoc-capture-ibl'."
+          exit 1
+        fi
+        echo "Ouverture de $LATEST_RDC dans RenderDoc..."
+        "$RENDERDOC_BIN" "$LATEST_RDC"
+
+  renderdoc-thumb:
+    desc: Extract embedded preview image from the latest .rdc capture
+    vars:
+      RENDERDOC_DIR: '{{.RENDERDOC_DIR | default .ENV.RENDERDOC_DIR | default "/usr/bin"}}'
+    cmds:
+      - |
+        RENDERDOC_CMD="{{.RENDERDOC_DIR}}/renderdoccmd"
+        if [ ! -x "$RENDERDOC_CMD" ]; then
+          if command -v renderdoccmd >/dev/null 2>&1; then
+            RENDERDOC_CMD="$(command -v renderdoccmd)"
+          elif [ -x "$HOME/.local/renderdoc_1.42/bin/renderdoccmd" ]; then
+            RENDERDOC_CMD="$HOME/.local/renderdoc_1.42/bin/renderdoccmd"
+          else
+            echo "Erreur: renderdoccmd introuvable."
+            exit 127
+          fi
+        fi
+        LATEST_RDC=$(ls -td build/profiling/renderdoc/*.rdc 2>/dev/null | head -n1 || true)
+        if [ -z "$LATEST_RDC" ] || [ ! -f "$LATEST_RDC" ]; then
+          echo "Erreur: Aucune trace .rdc trouvée dans build/profiling/renderdoc/."
+          exit 1
+        fi
+        "$RENDERDOC_CMD" thumb --out=build/profiling/renderdoc/ibl_thumb.png "$LATEST_RDC"
+        echo "✓ Miniature extraite dans build/profiling/renderdoc/ibl_thumb.png"
 
   # ─── CODEGEN / VERIFICATION (TLA+) ──────────────────────────────────────────
 
@@ -824,3 +950,114 @@ tasks:
         else
           echo "⚠️ Graphviz (dot) not found on host. Generated DOT file: verification/EnvManagerVerification.dot"
         fi
+
+  # ─── WINDOWS & CROSS-COMPILATION (WIN / WINE) ──────────────────────────────
+
+  build-win-deps:
+    desc: Build Windows x64 third-party static libraries (GLFW, ImGui, SIMD, STB)
+    cmds:
+      - "{{.BASH}} scripts/build_win_deps.sh"
+
+  build-win:
+    desc: Cross-compile debug binary for Windows x64
+    cmds:
+      - "{{.BASH}} scripts/build_win.sh debug"
+
+  build-win-release:
+    desc: Cross-compile optimized release binary for Windows x64
+    cmds:
+      - "{{.BASH}} scripts/build_win.sh release"
+
+  build-win-profile:
+    desc: Cross-compile optimized binary with Tracy Profiler for Windows x64
+    cmds:
+      - "{{.BASH}} scripts/build_win.sh profile"
+
+  build-win-ultra:
+    desc: Cross-compile ultra-optimized binary for Windows x64
+    cmds:
+      - "{{.BASH}} scripts/build_win.sh ultra"
+
+  run-win:
+    desc: Run the Windows debug executable under Wine
+    deps: [build-win]
+    cmds:
+      - "WINEDEBUG=-all wine {{.BUILD_BASE}}/debug-win/suckless-odin.exe {{.CLI_ARGS}}"
+
+  run-win-release:
+    desc: Run the Windows release executable under Wine
+    deps: [build-win-release]
+    cmds:
+      - "WINEDEBUG=-all wine {{.BUILD_BASE}}/release-win/suckless-odin.exe {{.CLI_ARGS}}"
+
+  test-win:
+    desc: Run all unit, cli, and shader tests for Windows under Wine
+    cmds:
+      - "{{.BASH}} scripts/test_win.sh all"
+
+  test-win-unit:
+    desc: Run unit tests for Windows under Wine
+    cmds:
+      - "{{.BASH}} scripts/test_win.sh unit"
+
+  test-win-cli:
+    desc: Run CLI tests for Windows under Wine
+    cmds:
+      - "{{.BASH}} scripts/test_win.sh cli"
+
+  test-win-shader:
+    desc: Run shader compilation tests for Windows under Wine
+    cmds:
+      - "{{.BASH}} scripts/test_win.sh shader"
+
+  package-win:
+    desc: Package Windows release into .tar.zst and .zip archives
+    deps: [build-win-release]
+    cmds:
+      - "{{.BASH}} scripts/package_win.sh {{.version}} {{.CLI_ARGS}}"
+    vars:
+      version: '{{default "v0.1.0" .version}}'
+
+  run-package-win:
+    desc: Extract and test packaged Windows release in an isolated sandbox under Wine
+    cmds:
+      - "{{.BASH}} scripts/run_package_win.sh {{.version}} {{.CLI_ARGS}}"
+    vars:
+      version: '{{default "v0.1.0" .version}}'
+
+  package-linux:
+    desc: Package Linux release into .tar.zst and .zip archives
+    deps: [build-release]
+    cmds:
+      - "{{.BASH}} scripts/package_linux.sh {{.version}} {{.CLI_ARGS}}"
+    vars:
+      version: '{{default "v0.1.0" .version}}'
+
+  package:
+    desc: Package both Linux and Windows release archives
+    deps: [package-linux, package-win]
+
+  # -----------------------------------------------------------------------------
+  # Steam & Proton Tasks
+  # -----------------------------------------------------------------------------
+
+  run-proton:
+    desc: Run suckless-odin Windows executable under official Steam Proton runtime
+    cmds:
+      - "{{.BASH}} scripts/run_proton.sh {{.version}} {{.CLI_ARGS}}"
+    vars:
+      version: '{{default "v0.1.0" .version}}'
+
+  steam-gen-assets:
+    desc: Generate Steam Grid artworks (Cover, Hero, Banner, Logo, Icon) via ImageMagick
+    cmds:
+      - "{{.BASH}} scripts/generate_steam_assets.sh"
+
+  steam-art:
+    desc: Inject generated Steam Grid artworks and icon into local Steam client shortcuts
+    deps: [steam-gen-assets]
+    cmds:
+      - "{{.PYTHON3}} scripts/inject_steam_art.py {{.CLI_ARGS}}"
+
+
+

@@ -14,12 +14,12 @@ layout(binding = 1,
 
 layout(location = 0) uniform float roughnessValue;
 layout(location = 1) uniform int currentMipLevel;
-layout(location = 2) uniform float clampThreshold;
+layout(location = 2) uniform float clamp_threshold;
 
 layout(location = 3) uniform int u_offset_y;
 layout(location = 4) uniform int u_max_y;
 
-layout(local_size_x = 32, local_size_y = 32, local_size_z = 1) in;
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
 // Convertit un vecteur directionnel en coordonnées UV équirectangulaires
 vec2 dirToUV(vec3 v)
@@ -105,7 +105,7 @@ void main(void)
 	float totalWeight = 0;
 
 	/* Ensure valid clamp threshold */
-	float safeThreshold = max(clampThreshold, 1.0);
+	float safeThreshold = max(clamp_threshold, 1.0);
 
 	for (uint i = 0; i < SAMPLE_COUNT; ++i) {
 		vec2 u = sampleHammersley(i);

@@ -8,6 +8,7 @@ import log "../core/log"
 import cam "../camera"
 import scene "../scene"
 import gui "../gui"
+import renderdoc "../core/renderdoc"
 
 // GLFW key callback — handles press-only actions.
 // Movement keys (WASD/Q/E) are handled via polling in process_keyboard().
@@ -60,6 +61,8 @@ key_callback :: proc "c" (window: glfw.WindowHandle, key, scancode, action, mods
 		scene.scene_cycle_env(&app.scene, 1)
 	case glfw.KEY_PAGE_DOWN:
 		scene.scene_cycle_env(&app.scene, -1)
+	case glfw.KEY_F12:
+		renderdoc.trigger_capture()
 	}
 }
 

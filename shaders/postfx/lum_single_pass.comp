@@ -31,20 +31,20 @@ void main()
 	// Scene resolution
 	vec2 sceneSize = vec2(textureSize(sceneTexture, 0));
 
-	// Virtual 64×64 grid: each of the 256 threads covers a 4×4 block of tiles.
-	// Thread (tx, ty) covers tiles [(tx*4)..(tx*4+3), (ty*4)..(ty*4+3)]
-	vec2 tileSize = sceneSize / 64.0;
+	// Virtual 32×32 grid: each of the 256 threads covers a 2×2 block of tiles (1024 bilinear samples).
+	// Provides complete full-frame coverage while cutting texture fetches by 4×.
+	vec2 tileSize = sceneSize / 32.0;
 
 	float localLogLum = 0.0;
 	float localValid = 0.0;
 
-	// Process 4×4 = 16 tiles per thread
-	for (int ty = 0; ty < 4; ty++) {
-		for (int tx = 0; tx < 4; tx++) {
-			ivec2 tileCoord = threadId * 4 + ivec2(tx, ty);
+	// Process 2×2 = 4 tiles per thread (16 bilinear samples per thread)
+	for (int ty = 0; ty < 2; ty++) {
+		for (int tx = 0; tx < 2; tx++) {
+			ivec2 tileCoord = threadId * 2 + ivec2(tx, ty);
 			vec2 tileStart = vec2(tileCoord) * tileSize;
 
-			// 2×2 bilinear samples per tile (same as Solution 3)
+			// 2×2 bilinear samples per tile
 			for (int sy = 0; sy < 2; sy++) {
 				for (int sx = 0; sx < 2; sx++) {
 					vec2 offset = (vec2(sx, sy) + 0.5) * (tileSize / 2.0);

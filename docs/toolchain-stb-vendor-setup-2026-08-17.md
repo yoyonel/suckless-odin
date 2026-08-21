@@ -45,11 +45,6 @@ ODIN_ROOT="$(odin root)"
 "${ODIN_ROOT}/vendor/stb/src/build_stb.sh"
 ```
 
-Pour notre environnement local spécifique :
-```bash
-/home/latty/.local/share/odin-linux-amd64-nightly+2026-08-06/vendor/stb/src/build_stb.sh
-```
-
 Ce script compile :
 - `stb_image.c` -> `stb_image.a`
 - `stb_image_write.c` -> `stb_image_write.a`

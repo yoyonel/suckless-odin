@@ -27,7 +27,11 @@ Plot_Format :: enum i32 {
 }
 
 when TRACY_ENABLE {
-	foreign import libtracy "../../../deps/libtracy.a"
+	when ODIN_OS == .Windows {
+		foreign import libtracy "../../../deps/libtracy_windows_x64.lib"
+	} else {
+		foreign import libtracy "../../../deps/libtracy.a"
+	}
 
 	@(default_calling_convention="c")
 	foreign libtracy {
